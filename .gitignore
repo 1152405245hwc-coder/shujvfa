@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+data/
+output/*
+!.gitkeep
+.streamlit/
+.pytest_cache/
+.review_render/
+*.db
