@@ -40,6 +40,10 @@ def match_claim_transactions(claim: Claim, transactions: list[Transaction], date
         elif amount_match == "PARTIAL": rules.append("M08")
         else: rules.append("M09")
         risks: list[str] = []
+        if claim.victim_account and tx.payer_account and claim.victim_account != tx.payer_account:
+            risks.append("PAYER_ACCOUNT_MISMATCH")
+        if claim.alleged_recipient_account and tx.payee_account and claim.alleged_recipient_account != tx.payee_account:
+            risks.append("PAYEE_ACCOUNT_MISMATCH")
         if not payee_exact: risks.append("THIRD_PARTY_RECIPIENT")
         if amount_match == "EXCEEDS": risks.append("AMOUNT_EXCEEDS_CLAIM")
         candidates.append(CandidateMatch(claim.id, tx.id, MatchLevel.EXACT if payer_exact else MatchLevel.MISMATCH, MatchLevel.EXACT if payee_exact else MatchLevel.MISMATCH, amount_match, "EXACT" if in_range else "WINDOW", tuple(rules), bool(risks), tuple(risks)))

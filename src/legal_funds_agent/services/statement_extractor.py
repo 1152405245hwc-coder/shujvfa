@@ -39,8 +39,6 @@ def extract_statement_payment(text: str, *, victim_name: str) -> StatementPaymen
 
 def compare_statement_to_claim(fact: StatementPaymentFact, claim: Claim) -> list[str]:
     conflicts: list[str] = []
-    if fact.victim_name != claim.victim_name:
-        conflicts.append("STATEMENT_VICTIM_CONFLICT")
     if fact.amount != claim.claimed_amount:
         conflicts.append("STATEMENT_AMOUNT_CONFLICT")
     if not (claim.time_start <= fact.payment_date <= claim.time_end):

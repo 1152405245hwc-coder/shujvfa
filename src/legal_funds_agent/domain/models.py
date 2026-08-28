@@ -37,6 +37,7 @@ class SourceLocator(BaseModel):
     end_offset: int | None = Field(default=None, ge=0)
     line_number: int | None = Field(default=None, ge=1)
     label: str | None = None
+    source_text: str | None = None
 
     @model_validator(mode="after")
     def valid_location(self):
@@ -160,6 +161,23 @@ class EvidenceLink(BaseModel):
         return self
 
 
+class TransactionReviewAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    transaction_id: str
+    disposition: Literal["INCLUDED", "EXCLUDED", "DISPUTED"]
+    reason_code: Literal[
+        "MATCHED_CLAIM",
+        "DUPLICATE_TRANSACTION",
+        "UNRELATED_TRANSACTION",
+        "THIRD_PARTY_RECIPIENT",
+        "ACCOUNT_MISMATCH",
+        "AMOUNT_MISMATCH",
+        "DATE_MISMATCH",
+        "OTHER",
+    ]
+    note: str | None = None
+
+
 class ReviewDecision(BaseModel):
     id: str
     case_id: str
@@ -179,3 +197,4 @@ class ReviewDecision(BaseModel):
     reviewed_at: datetime | None = None
     note: str | None = None
     verification_error_codes: list[str] = Field(default_factory=list)
+    transaction_review_actions: list[TransactionReviewAction] = Field(default_factory=list)

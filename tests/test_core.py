@@ -121,7 +121,18 @@ class CoreReviewCases(unittest.TestCase):
         self.assertIn("AMOUNT_VERIFICATION_FAILED", errors)
         self.assertIn("HUMAN_CONFIRMATION_BLOCKED", errors)
 
+    def test_payer_account_conflict_is_recalled_and_blocking(self):
+        txs = parse("T014,2026-03-15,10:00:00,张某,6999,李某,6217,50000,投资款")
+        candidate = match_claim_transactions(make_claim(), txs)[0]
+        self.assertIn("PAYER_ACCOUNT_MISMATCH", candidate.risk_codes)
+        self.assertTrue(candidate.blocking_conflict)
+
+    def test_payee_account_conflict_is_recalled_and_blocking(self):
+        txs = parse("T015,2026-03-15,10:00:00,张某,6222,李某,6999,50000,投资款")
+        candidate = match_claim_transactions(make_claim(), txs)[0]
+        self.assertIn("PAYEE_ACCOUNT_MISMATCH", candidate.risk_codes)
+        self.assertTrue(candidate.blocking_conflict)
+
 
 if __name__ == "__main__":
     unittest.main()
-

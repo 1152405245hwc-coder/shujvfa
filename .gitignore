@@ -9,3 +9,5 @@ output/*
 .pytest_cache/
 .review_render/
 *.db
+*.egg-info/
+.streamlit_*.log

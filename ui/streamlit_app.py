@@ -14,8 +14,14 @@ import streamlit as st
 from legal_funds_agent.persistence.database import connect
 from legal_funds_agent.persistence.repository import Repository
 from legal_funds_agent.llm.factory import provider_from_environment
+from legal_funds_agent.domain.models import TransactionReviewAction
 from legal_funds_agent.services.report_service import report_to_csv, report_to_html, report_to_json
-from legal_funds_agent.workflow.vertical_slice import review_transactions, run_case_inputs, run_demo_case
+from legal_funds_agent.workflow.vertical_slice import (
+    confirm_claim_extraction,
+    review_transactions,
+    run_case_inputs,
+    run_demo_case,
+)
 
 
 st.set_page_config(page_title="资金链证审", page_icon=None, layout="wide", initial_sidebar_state="expanded")
@@ -60,6 +66,12 @@ def _header(title: str, subtitle: str) -> None:
     st.markdown(f'<p class="workspace-title">{title}</p><p class="workspace-subtitle">{subtitle}</p>', unsafe_allow_html=True)
 
 
+def _editor_records(edited) -> list[dict]:
+    if hasattr(edited, "to_dict"):
+        return edited.to_dict("records")
+    return list(edited)
+
+
 def case_page() -> None:
     _header("案件与材料", "创建审查任务并登记起诉书、被害人陈述和银行流水")
     case_id = st.text_input("案件编号", value="CASE-0001")
@@ -67,7 +79,7 @@ def case_page() -> None:
     source = st.segmented_control("材料来源", ["演示案件", "上传材料"], default="演示案件")
     if source == "演示案件":
         st.caption("使用完全虚构的 D01 案例：指控50,000元，流水对应30,000元。")
-        run_clicked = st.button("运行演示审查", type="primary", use_container_width=False)
+        run_clicked = st.button("运行演示审查", type="primary", width="content")
         if run_clicked:
             try:
                 with st.status("正在执行审查工作流", expanded=True) as status:
@@ -112,7 +124,7 @@ def case_page() -> None:
     failed_events = st.session_state.get("failed_audit_events")
     if failed_events:
         with st.expander("失败步骤日志"):
-            st.dataframe([event.to_dict() for event in failed_events], use_container_width=True, hide_index=True)
+            st.dataframe([event.to_dict() for event in failed_events], width="stretch", hide_index=True)
     st.markdown('<div class="legal-notice">本系统只核验当前材料之间的资金证据对应关系，不作定罪、量刑或最终犯罪金额认定。</div>', unsafe_allow_html=True)
 
 
@@ -131,7 +143,7 @@ def transactions_page(result) -> None:
         }
         if not query or query.lower() in " ".join(str(value).lower() for value in row.values()):
             rows.append(row)
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
     st.caption(f"共 {len(result.transactions)} 笔流水；当前显示 {len(rows)} 笔；候选 {len(candidate_ids)} 笔。")
 
 
@@ -144,6 +156,21 @@ def review_page(result) -> None:
     c.metric("系统状态", result.system_decision.status.value)
     d.metric("陈述冲突", len(result.statement_conflicts))
     st.write(f"**付款主张：** {claim.victim_name} 于 {claim.time_start} 向 {claim.alleged_recipient_name or '待确认收款人'} 支付人民币 {claim.claimed_amount:,.2f} 元。")
+    with st.expander("查看 Claim 原始来源", expanded=True):
+        for locator in result.claim_locators:
+            st.caption(
+                f"来源：{locator.evidence_id} · 字符位置：{locator.start_offset}–{locator.end_offset}"
+            )
+            st.code(locator.source_text or "（无原文片段）", language=None)
+    if claim.extraction_status != "human_confirmed":
+        st.warning("Claim 当前为模型提取结果。确认其字段及原文来源后，才能开始逐笔交易复核。")
+        if st.button("确认 Claim 提取结果", type="primary"):
+            result.claim = confirm_claim_extraction(claim)
+            st.session_state.pop("decision", None)
+            st.session_state.pop("report", None)
+            st.rerun()
+        return
+    st.markdown('<span class="status-ok">Claim 提取结果已由人工确认。</span>', unsafe_allow_html=True)
     if result.statement_conflicts:
         st.error("被害人陈述与起诉书存在冲突：" + "、".join(result.statement_conflicts))
     else:
@@ -157,28 +184,42 @@ def review_page(result) -> None:
         tx = result.transactions[candidate.transaction_id]
         candidate_rows.append({
             "处置": "DISPUTED" if candidate.blocking_conflict else "PENDING",
+            "理由": None,
+            "备注": "",
             "交易ID": tx.id, "日期": str(tx.date), "付款人": tx.payer_name,
             "收款人": tx.payee_name, "金额": float(tx.amount),
             "命中规则": ", ".join(candidate.matched_rules), "风险": ", ".join(candidate.risk_codes) or "-",
         })
     edited = st.data_editor(
-        candidate_rows, use_container_width=True, hide_index=True, disabled=["交易ID", "日期", "付款人", "收款人", "金额", "命中规则", "风险"],
+        candidate_rows, width="stretch", hide_index=True, disabled=["交易ID", "日期", "付款人", "收款人", "金额", "命中规则", "风险"],
         column_config={"处置": st.column_config.SelectboxColumn(options=["PENDING", "INCLUDED", "EXCLUDED", "DISPUTED"], required=True),
+                       "理由": st.column_config.SelectboxColumn(options=[
+                           "MATCHED_CLAIM", "DUPLICATE_TRANSACTION", "UNRELATED_TRANSACTION",
+                           "THIRD_PARTY_RECIPIENT", "ACCOUNT_MISMATCH", "AMOUNT_MISMATCH",
+                           "DATE_MISMATCH", "OTHER",
+                       ], required=True),
                        "金额": st.column_config.NumberColumn(format="¥ %.2f")},
         key="candidate_review_editor",
     )
     reviewer = st.text_input("复核人", placeholder="填写姓名或工号")
     note = st.text_area("复核备注", placeholder="记录纳入、排除或争议处理的依据")
     if st.button("确认复核并生成新版本", type="primary", disabled=not result.candidates):
-        dispositions = {row["交易ID"]: row["处置"] for _, row in edited.iterrows()}
+        edited_records = _editor_records(edited)
+        dispositions = {row["交易ID"]: row["处置"] for row in edited_records}
         if not reviewer.strip():
             st.error("必须填写复核人。")
         elif "PENDING" in dispositions.values():
             st.error("仍有候选交易未处置，不能确认。")
+        elif any(not row["理由"] for row in edited_records):
+            st.error("每笔候选交易都必须选择处置理由。")
         else:
             try:
+                actions = [TransactionReviewAction(
+                    transaction_id=row["交易ID"], disposition=row["处置"],
+                    reason_code=row["理由"], note=str(row["备注"]).strip() or None,
+                ) for row in edited_records]
                 decision, report = review_transactions(
-                    result, dispositions, reviewer=reviewer.strip(), note=note.strip() or None,
+                    result, actions, reviewer=reviewer.strip(), note=note.strip() or None,
                     supersedes=st.session_state.get("decision"),
                 )
                 st.session_state.decision = decision
@@ -186,6 +227,7 @@ def review_page(result) -> None:
                 repository = st.session_state.get("repository")
                 if repository:
                     repository.save_decision(decision)
+                    repository.save_audit_events(result.audit_events[-2:])
                 st.success(f"已生成 v{decision.version}：{decision.status.value}")
             except Exception as exc:
                 st.error(f"复核确认被校验引擎阻止：{exc}")
@@ -194,7 +236,7 @@ def review_page(result) -> None:
 def audit_page(result) -> None:
     _header("审计与报告", "查看处理步骤、模型和工具调用，并导出可复核底稿")
     st.subheader("运行日志")
-    st.dataframe([event.to_dict() for event in result.audit_events], use_container_width=True, hide_index=True)
+    st.dataframe([event.to_dict() for event in result.audit_events], width="stretch", hide_index=True)
     report = st.session_state.get("report")
     decision = st.session_state.get("decision")
     if not report or not decision:
@@ -209,9 +251,9 @@ def audit_page(result) -> None:
     csv_text = report_to_csv(report)
     html_text = report_to_html(report)
     x, y, z = st.columns(3)
-    x.download_button("下载 JSON", json_text, file_name=f"{result.claim.case_id}-review.json", mime="application/json", use_container_width=True)
-    y.download_button("下载 CSV", "\ufeff" + csv_text, file_name=f"{result.claim.case_id}-transactions.csv", mime="text/csv", use_container_width=True)
-    z.download_button("下载 HTML", html_text, file_name=f"{result.claim.case_id}-review.html", mime="text/html", use_container_width=True)
+    x.download_button("下载 JSON", json_text, file_name=f"{result.claim.case_id}-review.json", mime="application/json", width="stretch")
+    y.download_button("下载 CSV", "\ufeff" + csv_text, file_name=f"{result.claim.case_id}-transactions.csv", mime="text/csv", width="stretch")
+    z.download_button("下载 HTML", html_text, file_name=f"{result.claim.case_id}-review.html", mime="text/html", width="stretch")
 
 
 st.sidebar.markdown("### 资金链证审")

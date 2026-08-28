@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from legal_funds_agent.domain.models import Claim, DecisionType, ReviewDecision, ReviewStatus, Transaction
+from legal_funds_agent.domain.models import (
+    Claim, DecisionType, ReviewDecision, ReviewStatus, Transaction, TransactionReviewAction,
+)
 
 
 def build_decision(claim: Claim, transactions: dict[str, Transaction], *, included: list[str] | None = None,
@@ -12,7 +14,8 @@ def build_decision(claim: Claim, transactions: dict[str, Transaction], *, includ
                    supersedes_decision_id: str | None = None, reviewer: str | None = None,
                    reviewed_at: datetime | None = None, note: str | None = None,
                    reason_codes: list[str] | None = None, material_conflict: bool = False,
-                   has_pending_candidates: bool = False) -> ReviewDecision:
+                   has_pending_candidates: bool = False,
+                   transaction_review_actions: list[TransactionReviewAction] | None = None) -> ReviewDecision:
     included = included or []
     excluded = excluded or []
     disputed = disputed or []
@@ -45,4 +48,4 @@ def build_decision(claim: Claim, transactions: dict[str, Transaction], *, includ
         disputed_transaction_ids=list(disputed), covered_amount=covered, uncovered_amount=uncovered,
         disputed_amount=disputed_amount, reason_codes=reasons, reviewer=reviewer, reviewed_at=reviewed_at,
         note=note,
-        verification_error_codes=[])
+        verification_error_codes=[], transaction_review_actions=transaction_review_actions or [])

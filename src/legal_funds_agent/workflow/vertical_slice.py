@@ -7,7 +7,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from legal_funds_agent.audit.logger import AuditEvent, completed_event, failed_event
-from legal_funds_agent.domain.models import Claim, DecisionType, ReviewDecision, Transaction
+from legal_funds_agent.domain.models import (
+    Claim,
+    DecisionType,
+    ReviewDecision,
+    SourceLocator,
+    Transaction,
+    TransactionReviewAction,
+)
 from legal_funds_agent.llm.mock_provider import MockProvider
 from legal_funds_agent.llm.base import LLMProvider
 from legal_funds_agent.parsers.transaction_csv_parser import parse_transactions
@@ -25,7 +32,9 @@ from legal_funds_agent.services.verification_engine import find_duplicate_transa
 
 @dataclass
 class WorkflowResult:
+    task_id: str
     claim: Claim
+    claim_locators: list[SourceLocator]
     statement_fact: StatementPaymentFact
     statement_conflicts: list[str]
     duplicate_groups: dict[str, list[str]]
@@ -56,9 +65,12 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
     provider = provider or MockProvider()
     step, tool, started, step_input = "claim_extraction", f"{provider.name}_structured", datetime.now(timezone.utc), indictment_text
     try:
-        claims, _ = extract_claims(indictment_text, case_id=case_id, evidence_id="EVI-INDICTMENT", provider=provider)
+        claims, claim_locators = extract_claims(
+            indictment_text, case_id=case_id, evidence_id="EVI-INDICTMENT", provider=provider
+        )
+        if len(claims) != 1:
+            raise ValueError("V0.1 MVP currently supports exactly one PaymentClaim")
         claim = claims[0]
-        claim.extraction_status = "human_confirmed"
         metrics = getattr(provider, "last_call_metrics", {})
         logs.append(completed_event(
             task_id, case_id, step, tool, started, model=provider.name,
@@ -105,7 +117,18 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
             input_hash=_hash_text(step_input),
         ))
         raise WorkflowExecutionError(str(exc), logs) from exc
-    return WorkflowResult(claim, statement_fact, statement_conflicts, duplicate_groups, tx_index, candidates, system_decision, logs)
+    return WorkflowResult(
+        task_id=task_id,
+        claim=claim,
+        claim_locators=claim_locators,
+        statement_fact=statement_fact,
+        statement_conflicts=statement_conflicts,
+        duplicate_groups=duplicate_groups,
+        transactions=tx_index,
+        candidates=candidates,
+        system_decision=system_decision,
+        audit_events=logs,
+    )
 
 
 def run_demo_case(case_dir: Path, *, provider: LLMProvider | None = None) -> WorkflowResult:
@@ -117,16 +140,35 @@ def run_demo_case(case_dir: Path, *, provider: LLMProvider | None = None) -> Wor
     )
 
 
+def confirm_claim_extraction(claim: Claim) -> Claim:
+    if claim.extraction_status not in {"model_extracted", "human_corrected", "human_confirmed"}:
+        raise ValueError("claim extraction requires review before confirmation")
+    return claim.model_copy(update={"extraction_status": "human_confirmed"})
+
+
 def confirm_transactions(result: WorkflowResult, transaction_ids: list[str], *, reviewer: str) -> tuple[ReviewDecision, dict]:
-    return review_transactions(result, {transaction_id: "INCLUDED" for transaction_id in transaction_ids}, reviewer=reviewer)
+    included = set(transaction_ids)
+    actions = [
+        TransactionReviewAction(
+            transaction_id=candidate.transaction_id,
+            disposition="INCLUDED" if candidate.transaction_id in included else "EXCLUDED",
+            reason_code="MATCHED_CLAIM" if candidate.transaction_id in included else "UNRELATED_TRANSACTION",
+        )
+        for candidate in result.candidates
+    ]
+    return review_transactions(result, actions, reviewer=reviewer)
 
 
-def review_transactions(result: WorkflowResult, dispositions: dict[str, str], *, reviewer: str,
+def review_transactions(result: WorkflowResult, actions: list[TransactionReviewAction], *, reviewer: str,
                         note: str | None = None,
                         supersedes: ReviewDecision | None = None) -> tuple[ReviewDecision, dict]:
-    allowed = {"INCLUDED", "EXCLUDED", "DISPUTED"}
-    if any(value not in allowed for value in dispositions.values()):
-        raise ValueError("unsupported transaction disposition")
+    if result.claim.extraction_status != "human_confirmed":
+        raise ValueError("CLAIM_EXTRACTION_CONFIRMATION_REQUIRED")
+    candidate_ids = {candidate.transaction_id for candidate in result.candidates}
+    reviewed_ids = {action.transaction_id for action in actions}
+    if len(reviewed_ids) != len(actions) or candidate_ids != reviewed_ids:
+        raise ValueError("PENDING_CANDIDATE_REVIEW_REQUIRED")
+    dispositions = {action.transaction_id: action.disposition for action in actions}
     included = [key for key, value in dispositions.items() if value == "INCLUDED"]
     excluded = [key for key, value in dispositions.items() if value == "EXCLUDED"]
     disputed = [key for key, value in dispositions.items() if value == "DISPUTED"]
@@ -143,12 +185,37 @@ def review_transactions(result: WorkflowResult, dispositions: dict[str, str], *,
         note=note,
         material_conflict=bool(result.statement_conflicts),
         reason_codes=result.statement_conflicts,
+        transaction_review_actions=actions,
     )
+    review_started = datetime.now(timezone.utc)
+    counts = {
+        "reviewer": reviewer,
+        "decision_version": decision.version,
+        "included_count": len(included),
+        "excluded_count": len(excluded),
+        "disputed_count": len(disputed),
+    }
+    result.audit_events.append(completed_event(
+        result.task_id, result.claim.case_id, "human_review", "manual_review_v0.1",
+        review_started, details=counts,
+    ))
+    verification_started = datetime.now(timezone.utc)
     errors = verify_decision(result.claim, decision, result.transactions)
     if errors:
-        raise ValueError(f"human confirmation blocked: {', '.join(errors)}")
+        decision.verification_error_codes = errors
+        error = ValueError(f"human confirmation blocked: {', '.join(errors)}")
+        result.audit_events.append(failed_event(
+            result.task_id, result.claim.case_id, "verification", "verification_engine_v0.1",
+            verification_started, error, details={"verification_error_codes": errors},
+        ))
+        raise error
+    result.audit_events.append(completed_event(
+        result.task_id, result.claim.case_id, "verification", "verification_engine_v0.1",
+        verification_started, details={"verification_error_codes": []},
+    ))
     return decision, build_report(
-        result.claim, decision, result.transactions, statement_conflicts=result.statement_conflicts,
+        result.claim, decision, result.transactions, claim_locators=result.claim_locators,
+        statement_conflicts=result.statement_conflicts,
         duplicate_groups=result.duplicate_groups,
     )
 
@@ -156,6 +223,7 @@ def review_transactions(result: WorkflowResult, dispositions: dict[str, str], *,
 def main() -> None:
     root = Path(__file__).resolve().parents[3]
     result = run_demo_case(root / "sample_data" / "demo_case_001")
+    result.claim = confirm_claim_extraction(result.claim)
     selected = [candidate.transaction_id for candidate in result.candidates if not candidate.blocking_conflict]
     decision, report = confirm_transactions(result, selected, reviewer="demo-reviewer")
     print(json.dumps({

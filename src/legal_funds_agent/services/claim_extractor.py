@@ -23,6 +23,7 @@ def extract_claims(text: str, *, case_id: str, evidence_id: str, provider: LLMPr
             start_offset=start_offset,
             end_offset=end_offset,
             label=locator_id,
+            source_text=source_text,
         )
         claim = Claim(
             id=f"CLM-{index:03d}", case_id=case_id, victim_name=row["victim_name"],

@@ -17,31 +17,47 @@ class Repository:
     def __init__(self, connection: sqlite3.Connection):
         self.connection = connection
 
+    def _insert_immutable(self, table: str, object_id: str, columns: tuple[str, ...], values: tuple) -> None:
+        existing = self.connection.execute(
+            f"SELECT payload_json FROM {table} WHERE id = ?", (object_id,)
+        ).fetchone()
+        payload = values[-1]
+        if existing:
+            if existing["payload_json"] == payload:
+                return
+            raise ValueError(f"immutable {table[:-1]} already exists: {object_id}")
+        placeholders = ", ".join("?" for _ in columns)
+        self.connection.execute(
+            f"INSERT INTO {table}({', '.join(columns)}) VALUES ({placeholders})", values
+        )
+
     def save_claim(self, claim: Claim) -> None:
         payload = claim.model_dump(mode="json")
         payload["victim_account"] = _mask_account(claim.victim_account)
         payload["alleged_recipient_account"] = _mask_account(claim.alleged_recipient_account)
         payload["alleged_recipient_account_id"] = None
-        self.connection.execute(
-            "INSERT OR REPLACE INTO claims(id, case_id, payload_json) VALUES (?, ?, ?)",
+        self._insert_immutable(
+            "claims", claim.id, ("id", "case_id", "payload_json"),
             (claim.id, claim.case_id, json.dumps(payload, ensure_ascii=False)),
         )
         self.connection.commit()
 
     def save_transactions(self, transactions: list[Transaction]) -> None:
-        rows = []
-        for tx in transactions:
-            payload = tx.model_dump(mode="json")
-            payload["payer_account"] = _mask_account(tx.payer_account)
-            payload["payee_account"] = _mask_account(tx.payee_account)
-            payload["payer_account_id"] = None
-            payload["payee_account_id"] = None
-            rows.append((tx.id, tx.case_id, tx.dedup_fingerprint, json.dumps(payload, ensure_ascii=False)))
-        self.connection.executemany(
-            "INSERT OR REPLACE INTO transactions(id, case_id, fingerprint, payload_json) VALUES (?, ?, ?, ?)",
-            rows,
-        )
-        self.connection.commit()
+        try:
+            for tx in transactions:
+                payload = tx.model_dump(mode="json")
+                payload["payer_account"] = _mask_account(tx.payer_account)
+                payload["payee_account"] = _mask_account(tx.payee_account)
+                payload["payer_account_id"] = None
+                payload["payee_account_id"] = None
+                self._insert_immutable(
+                    "transactions", tx.id, ("id", "case_id", "fingerprint", "payload_json"),
+                    (tx.id, tx.case_id, tx.dedup_fingerprint, json.dumps(payload, ensure_ascii=False)),
+                )
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def save_decision(self, decision: ReviewDecision) -> None:
         payload = decision.model_dump_json()
