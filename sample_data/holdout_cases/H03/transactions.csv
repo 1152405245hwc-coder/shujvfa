@@ -1,0 +1,2 @@
+transaction_id,date,time,payer,payer_account,payee,payee_account,amount,remark
+H03-T001,2026-05-06,16:00:00,郑某,62223003,刘某,62173003,50000,合伙经营款

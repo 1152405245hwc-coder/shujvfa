@@ -1,0 +1,2 @@
+transaction_id,date,time,payer,payer_account,payee,payee_account,amount,remark
+G04-T001,2026-03-15,10:00:00,张某,62220001,李某,62170001,30000,投资款

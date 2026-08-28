@@ -70,3 +70,50 @@ V0.1 评测至少比较四种方法：人工审查、通用大模型直接回答
 
 每次失败至少记录：案例 ID、输入摘要、预期、实际输出、失败环节、是否影响金额、人工处置、修复版本和是否加入回归测试。不得删除失败记录或只保留成功截图。
 
+## 6. V0.1 Gold Cases
+
+Core冻结后建立五个公开虚构回归案例：
+
+| ID | 机制 | 关键预期 |
+| --- | --- | --- |
+| G01 | 单笔部分覆盖 | 覆盖30,000，未覆盖20,000，`PARTIALLY_CORROBORATED` |
+| G02 | 两笔拆分付款 | 20,000 + 30,000，`FULLY_CORROBORATED` |
+| G03 | 重复流水 | 系统先阻断，只纳入一笔后覆盖50,000 |
+| G04 | 起诉书与陈述金额冲突 | 流水可纳入，但最终保持 `CONFLICTING` |
+| G05 | 第三方账户收款 | `DISPUTED`，覆盖0，争议50,000 |
+
+材料位于 `sample_data/gold_cases/`，`manifest.json` 同时定义人工处置和机器可读预期。
+运行：
+
+```powershell
+$env:PYTHONPATH='src'
+.\.venv\Scripts\python.exe -m legal_funds_agent.evaluation.gold_cases --provider mock
+```
+
+Mock V0.1 baseline 为5/5案例、45/45检查通过，格式通过率和来源引用通过率均为100%。
+DeepSeek在完全相同输入和manifest上也达到5/5案例、45/45检查通过。完整结果分别保存在
+`docs/evaluation/baseline_mock_v0.1.json` 和 `docs/evaluation/baseline_deepseek_v0.1.json`。
+
+| Provider | Gold Case结果 | 格式通过率 | 来源引用 | 延迟与Token | 当前结论 |
+| --- | ---: | ---: | ---: | --- | --- |
+| Mock | 5/5 | 100% | 100% | 0ms / 0 tokens | 冻结基线 |
+| OpenAI | 未执行 | 未实测 | 未实测 | 未实测 | 中转站生成请求429，不能形成正式结果 |
+| DeepSeek | 5/5 | 100% | 100% | 平均888.4ms；790输入/425输出 | 同公开回归集实测通过 |
+
+Gold Cases是公开开发回归集，不能替代后续独立盲测。Provider对照必须使用完全相同的材料和
+manifest，不得因某个模型的输出调整人工处置或金额预期。
+
+## 7. 内部留出集
+
+H01-H05在首次真实Provider调用前固定，覆盖不同主体与金额、日期窗口、超额流水、陈述日期冲突
+和陈述收款人冲突。输入文件与manifest的SHA-256保存在
+`docs/evaluation/holdout_v0.1_seal.json`，自动化测试会阻止封存文件被静默修改。
+
+| Provider | 留出集结果 | 格式通过率 | 来源引用 | 延迟与Token |
+| --- | ---: | ---: | ---: | --- |
+| Mock | 5/5 | 100% | 100% | 0ms / 0 tokens |
+| DeepSeek | 5/5 | 100% | 100% | 平均922.8ms；827输入/469输出 |
+
+结果分别保存在 `docs/evaluation/holdout_mock_v0.1.json` 和
+`docs/evaluation/holdout_deepseek_v0.1.json`。该集合未用于修改核心、提示词或规则，但由项目内部
+构造，属于封存留出评测，不属于第三方或专家主持的真正盲测。

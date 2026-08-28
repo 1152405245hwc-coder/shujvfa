@@ -1,0 +1,2 @@
+transaction_id,date,time,payer,payer_account,payee,payee_account,amount,remark
+H01-T001,2026-04-02,09:30:00,赵某,62221001,王某,62171001,72000,设备代购款

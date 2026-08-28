@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,15 +52,28 @@ def _load_demo(provider):
     return run_demo_case(ROOT / "sample_data" / "demo_case_001", provider=provider)
 
 
-def _persist_result(result) -> Repository:
+def _persist_result(result) -> Path:
     data_dir = ROOT / "data"
     data_dir.mkdir(exist_ok=True)
-    repository = Repository(connect(data_dir / "cases.db"))
-    repository.save_claim(result.claim)
-    repository.save_transactions(list(result.transactions.values()))
-    repository.save_decision(result.system_decision)
-    repository.save_audit_events(result.audit_events)
-    return repository
+    database_path = data_dir / "cases.db"
+    with closing(connect(database_path)) as connection:
+        repository = Repository(connection)
+        repository.save_transactions(list(result.transactions.values()))
+        repository.save_decision(result.system_decision)
+        repository.save_audit_events(result.audit_events)
+    return database_path
+
+
+def _save_confirmed_claim(database_path: Path, claim) -> None:
+    with closing(connect(database_path)) as connection:
+        Repository(connection).save_claim(claim)
+
+
+def _save_human_review(database_path: Path, decision, audit_events) -> None:
+    with closing(connect(database_path)) as connection:
+        repository = Repository(connection)
+        repository.save_decision(decision)
+        repository.save_audit_events(audit_events)
 
 
 def _header(title: str, subtitle: str) -> None:
@@ -90,7 +104,7 @@ def case_page() -> None:
                     st.write(f"候选交易召回完成：{len(result.candidates)} 笔")
                     status.update(label="审查任务等待人工复核", state="complete")
                 st.session_state.result = result
-                st.session_state.repository = _persist_result(result) if persist_locally else None
+                st.session_state.repository_path = _persist_result(result) if persist_locally else None
                 st.session_state.pop("decision", None)
                 st.session_state.pop("report", None)
                 st.session_state.pop("failed_audit_events", None)
@@ -113,7 +127,7 @@ def case_page() -> None:
                     provider=provider_from_environment(provider_name),
                 )
                 st.session_state.result = result
-                st.session_state.repository = _persist_result(result) if persist_locally else None
+                st.session_state.repository_path = _persist_result(result) if persist_locally else None
                 st.session_state.pop("decision", None)
                 st.session_state.pop("report", None)
                 st.session_state.pop("failed_audit_events", None)
@@ -166,6 +180,9 @@ def review_page(result) -> None:
         st.warning("Claim 当前为模型提取结果。确认其字段及原文来源后，才能开始逐笔交易复核。")
         if st.button("确认 Claim 提取结果", type="primary"):
             result.claim = confirm_claim_extraction(claim)
+            repository_path = st.session_state.get("repository_path")
+            if repository_path:
+                _save_confirmed_claim(repository_path, result.claim)
             st.session_state.pop("decision", None)
             st.session_state.pop("report", None)
             st.rerun()
@@ -224,10 +241,9 @@ def review_page(result) -> None:
                 )
                 st.session_state.decision = decision
                 st.session_state.report = report
-                repository = st.session_state.get("repository")
-                if repository:
-                    repository.save_decision(decision)
-                    repository.save_audit_events(result.audit_events[-2:])
+                repository_path = st.session_state.get("repository_path")
+                if repository_path:
+                    _save_human_review(repository_path, decision, result.audit_events[-2:])
                 st.success(f"已生成 v{decision.version}：{decision.status.value}")
             except Exception as exc:
                 st.error(f"复核确认被校验引擎阻止：{exc}")
@@ -258,7 +274,7 @@ def audit_page(result) -> None:
 
 st.sidebar.markdown("### 资金链证审")
 st.sidebar.caption("涉案资金证据审查工作台 V0.1")
-provider_name = st.sidebar.selectbox("语义提取模型", ["mock", "deepseek"], help="金额计算和审查状态始终由确定性代码完成。")
+provider_name = st.sidebar.selectbox("语义提取模型", ["mock", "openai", "deepseek"], help="金额计算和审查状态始终由确定性代码完成。")
 page = st.sidebar.radio("工作区", ["案件与材料", "银行流水", "Claim 人工复核", "审计与报告"], label_visibility="collapsed")
 st.sidebar.divider()
 result = st.session_state.get("result")

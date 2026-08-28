@@ -1,0 +1,2 @@
+transaction_id,date,time,payer,payer_account,payee,payee_account,amount,remark
+H05-T001,2026-06-01,13:45:00,许某,62225005,周某,62175005,60000,短期借款

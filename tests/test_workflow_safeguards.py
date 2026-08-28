@@ -76,6 +76,36 @@ class WorkflowSafeguardTest(unittest.TestCase):
         with self.assertRaises(ValidationError):
             TransactionReviewAction(transaction_id="TX-T001", disposition="INCLUDED")
 
+    def test_review_reason_must_match_disposition(self):
+        invalid_pairs = [
+            ("INCLUDED", "DUPLICATE_TRANSACTION"),
+            ("EXCLUDED", "MATCHED_CLAIM"),
+            ("DISPUTED", "MATCHED_CLAIM"),
+        ]
+        for disposition, reason_code in invalid_pairs:
+            with self.subTest(disposition=disposition, reason_code=reason_code):
+                with self.assertRaisesRegex(ValidationError, "incompatible"):
+                    TransactionReviewAction(
+                        transaction_id="TX-T001",
+                        disposition=disposition,
+                        reason_code=reason_code,
+                    )
+
+    def test_superseded_decision_must_belong_to_same_claim_and_case(self):
+        indictment, statement = self._demo_texts()
+        csv_text = (Path(__file__).resolve().parents[1] / "sample_data" / "demo_case_001" / "transactions.csv").read_text(encoding="utf-8")
+        result = run_case_inputs(indictment_text=indictment, statement_text=statement, csv_text=csv_text)
+        result.claim = confirm_claim_extraction(result.claim)
+        actions = [TransactionReviewAction(
+            transaction_id="TX-T001", disposition="INCLUDED", reason_code="MATCHED_CLAIM",
+        )]
+        wrong_claim = result.system_decision.model_copy(update={"claim_id": "CLM-OTHER"})
+        with self.assertRaisesRegex(ValueError, "SUPERSEDES_CLAIM_MISMATCH"):
+            review_transactions(result, actions, reviewer="tester", supersedes=wrong_claim)
+        wrong_case = result.system_decision.model_copy(update={"case_id": "CASE-OTHER"})
+        with self.assertRaisesRegex(ValueError, "SUPERSEDES_CASE_MISMATCH"):
+            review_transactions(result, actions, reviewer="tester", supersedes=wrong_case)
+
     def test_multiple_claims_are_explicitly_rejected(self):
         indictment, statement = self._demo_texts()
         csv_text = (Path(__file__).resolve().parents[1] / "sample_data" / "demo_case_001" / "transactions.csv").read_text(encoding="utf-8")

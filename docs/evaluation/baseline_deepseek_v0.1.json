@@ -1,0 +1,203 @@
+{
+  "schema_version": "0.1.0",
+  "provider": "deepseek-chat",
+  "summary": {
+    "declared_cases": 5,
+    "evaluated_cases": 5,
+    "passed_cases": 5,
+    "case_pass_rate": 1.0,
+    "check_pass_rate": 1.0,
+    "format_pass_rate": 1.0,
+    "total_input_tokens": 790,
+    "total_output_tokens": 425,
+    "average_latency_ms": 888.4
+  },
+  "cases": [
+    {
+      "id": "G01",
+      "title": "单笔部分覆盖",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-G01-T001"
+        ],
+        "system_status": "PENDING_REVIEW",
+        "human_status": "PARTIALLY_CORROBORATED",
+        "covered_amount": "30000.00",
+        "uncovered_amount": "20000.00",
+        "disputed_amount": "0",
+        "risk_codes": [],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 158,
+        "output_tokens": 85,
+        "latency_ms": 1179
+      },
+      "error": null
+    },
+    {
+      "id": "G02",
+      "title": "两笔拆分完整覆盖",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-G02-T001",
+          "TX-G02-T002"
+        ],
+        "system_status": "PENDING_REVIEW",
+        "human_status": "FULLY_CORROBORATED",
+        "covered_amount": "50000.00",
+        "uncovered_amount": "0.00",
+        "disputed_amount": "0",
+        "risk_codes": [],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 158,
+        "output_tokens": 85,
+        "latency_ms": 845
+      },
+      "error": null
+    },
+    {
+      "id": "G03",
+      "title": "重复流水阻断重复计入",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-G03-T001",
+          "TX-G03-T002"
+        ],
+        "system_status": "CONFLICTING",
+        "human_status": "FULLY_CORROBORATED",
+        "covered_amount": "50000.00",
+        "uncovered_amount": "0.00",
+        "disputed_amount": "0",
+        "risk_codes": [],
+        "duplicate_group_count": 1,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 158,
+        "output_tokens": 85,
+        "latency_ms": 823
+      },
+      "error": null
+    },
+    {
+      "id": "G04",
+      "title": "起诉书与陈述金额冲突",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-G04-T001"
+        ],
+        "system_status": "CONFLICTING",
+        "human_status": "CONFLICTING",
+        "covered_amount": "30000.00",
+        "uncovered_amount": "20000.00",
+        "disputed_amount": "0",
+        "risk_codes": [
+          "STATEMENT_AMOUNT_CONFLICT"
+        ],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 158,
+        "output_tokens": 85,
+        "latency_ms": 927
+      },
+      "error": null
+    },
+    {
+      "id": "G05",
+      "title": "第三方账户收款",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-G05-T001"
+        ],
+        "system_status": "PENDING_REVIEW",
+        "human_status": "PENDING_REVIEW",
+        "covered_amount": "0",
+        "uncovered_amount": "50000.00",
+        "disputed_amount": "50000.00",
+        "risk_codes": [
+          "THIRD_PARTY_RECIPIENT"
+        ],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 158,
+        "output_tokens": 85,
+        "latency_ms": 668
+      },
+      "error": null
+    }
+  ]
+}

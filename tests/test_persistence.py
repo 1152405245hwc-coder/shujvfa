@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,6 +13,56 @@ from legal_funds_agent.workflow.vertical_slice import (
 
 
 class PersistenceTest(unittest.TestCase):
+    def test_claim_is_first_persisted_after_human_confirmation(self):
+        case_dir = Path(__file__).resolve().parents[1] / "sample_data" / "demo_case_001"
+        result = run_demo_case(case_dir)
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "case.db")
+            repository = Repository(connection)
+            repository.save_transactions(list(result.transactions.values()))
+            repository.save_decision(result.system_decision)
+            repository.save_audit_events(result.audit_events)
+            claim_count = connection.execute("SELECT COUNT(*) FROM claims").fetchone()[0]
+            self.assertEqual(claim_count, 0)
+
+            result.claim = confirm_claim_extraction(result.claim)
+            repository.save_claim(result.claim)
+            stored = connection.execute(
+                "SELECT payload_json FROM claims WHERE id = ?", (result.claim.id,)
+            ).fetchone()[0]
+            self.assertEqual(json.loads(stored)["extraction_status"], "human_confirmed")
+            connection.close()
+
+    def test_persistence_stages_can_use_separate_sqlite_connections(self):
+        case_dir = Path(__file__).resolve().parents[1] / "sample_data" / "demo_case_001"
+        result = run_demo_case(case_dir)
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "case.db"
+            connection = connect(database_path)
+            repository = Repository(connection)
+            repository.save_transactions(list(result.transactions.values()))
+            repository.save_decision(result.system_decision)
+            repository.save_audit_events(result.audit_events)
+            connection.close()
+
+            result.claim = confirm_claim_extraction(result.claim)
+            connection = connect(database_path)
+            Repository(connection).save_claim(result.claim)
+            connection.close()
+
+            human_decision, _ = confirm_transactions(result, ["TX-T001"], reviewer="tester")
+            connection = connect(database_path)
+            repository = Repository(connection)
+            repository.save_decision(human_decision)
+            repository.save_audit_events(result.audit_events[-2:])
+            versions = repository.list_decisions(result.claim.id)
+            stored_claim = connection.execute(
+                "SELECT payload_json FROM claims WHERE id = ?", (result.claim.id,)
+            ).fetchone()[0]
+            self.assertEqual([decision.version for decision in versions], [1, 2])
+            self.assertEqual(json.loads(stored_claim)["extraction_status"], "human_confirmed")
+            connection.close()
+
     def test_system_and_human_versions_are_both_retained(self):
         case_dir = Path(__file__).resolve().parents[1] / "sample_data" / "demo_case_001"
         result = run_demo_case(case_dir)

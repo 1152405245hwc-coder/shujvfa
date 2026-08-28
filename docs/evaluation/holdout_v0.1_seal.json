@@ -1,0 +1,23 @@
+{
+  "schema_version": "0.1.0",
+  "sealed_at": "2026-08-28T16:31:54+08:00",
+  "purpose": "Freeze fabricated holdout inputs and expected outcomes before the first provider evaluation.",
+  "files": {
+    "sample_data/holdout_cases/H01/indictment.txt": "731ffefad7a339bbfe0f6689144190ef1c787238fb36b9248b387a0954f4391f",
+    "sample_data/holdout_cases/H01/transactions.csv": "a3c654d31267324dd088854f6f109ca55c0e912d457680ad689995166046460e",
+    "sample_data/holdout_cases/H01/victim_statement.txt": "1b071065d8211887c1fec9a59014a48999275a6ee2119bb88f31e62eaedac7e5",
+    "sample_data/holdout_cases/H02/indictment.txt": "300e13348b0b483e4e8c06b12ccbe5524d040f5d53bba1b4c371f5b1ef185582",
+    "sample_data/holdout_cases/H02/transactions.csv": "ad2870f8039835af3adee5d01b28766064bf4cde7fb8ca7827d244ea1d781be9",
+    "sample_data/holdout_cases/H02/victim_statement.txt": "0de977b48be26c51dc893efd5e61c58ae619048329ee7588fe1482379b4bc9aa",
+    "sample_data/holdout_cases/H03/indictment.txt": "f6e4671c186c274448c5054ad18a488598309e401555104ff4d7fc5a5d563288",
+    "sample_data/holdout_cases/H03/transactions.csv": "e1208bae2b4ad18aba8b45f067073d2dbf078b800190bfc1c009e972db62e557",
+    "sample_data/holdout_cases/H03/victim_statement.txt": "85bbe6093e3aa4320ee88dd45031e458ee03b6bcbbeb8c29aabd8a075c01bd1c",
+    "sample_data/holdout_cases/H04/indictment.txt": "6a050af62701728663f3c5bef61ecc3b9e965ca0bde0590e82646256851eaf6b",
+    "sample_data/holdout_cases/H04/transactions.csv": "9b6408bf8683265a2e89f8c4def4f735e569e8f60fe77082110f23745c953072",
+    "sample_data/holdout_cases/H04/victim_statement.txt": "13e1d508ecf3f0cb96c47f9b3cd921197fa9985c40484f5b70be33c0f0dda884",
+    "sample_data/holdout_cases/H05/indictment.txt": "9b9df6352cb03a64c0d9237e968a12abe2c43ed5c377481f340fa61d69daccdd",
+    "sample_data/holdout_cases/H05/transactions.csv": "8f1b0c92852f203934ee39eeb38ff5ffcc5c9e490d2da6894a67f8fcc7d7f153",
+    "sample_data/holdout_cases/H05/victim_statement.txt": "5c0612891d8ce5bee9ab694fe099f451e209e55aaee9170910ba119ac28911fb",
+    "sample_data/holdout_cases/manifest.json": "500980fe8cf436f81cac291cae67421fbb70adde246e6d3ebd63e61eea4a529b"
+  }
+}

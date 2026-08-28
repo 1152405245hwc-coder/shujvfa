@@ -1,0 +1,2 @@
+transaction_id,date,time,payer,payer_account,payee,payee_account,amount,remark
+H04-T001,2026-05-10,11:15:00,冯某,62224004,钱某,62174004,25000,工程材料款

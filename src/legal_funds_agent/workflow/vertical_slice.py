@@ -173,6 +173,10 @@ def review_transactions(result: WorkflowResult, actions: list[TransactionReviewA
     excluded = [key for key, value in dispositions.items() if value == "EXCLUDED"]
     disputed = [key for key, value in dispositions.items() if value == "DISPUTED"]
     previous = supersedes or result.system_decision
+    if previous.claim_id != result.claim.id:
+        raise ValueError("SUPERSEDES_CLAIM_MISMATCH")
+    if previous.case_id != result.claim.case_id:
+        raise ValueError("SUPERSEDES_CASE_MISMATCH")
     decision = build_decision(
         result.claim,
         result.transactions,

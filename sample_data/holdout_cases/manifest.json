@@ -1,0 +1,90 @@
+{
+  "schema_version": "0.1.0",
+  "cases": [
+    {
+      "id": "H01",
+      "title": "不同主体与金额的单笔精确覆盖",
+      "expected_candidate_ids": ["TX-H01-T001"],
+      "review_actions": [
+        {"transaction_id": "TX-H01-T001", "disposition": "INCLUDED", "reason_code": "MATCHED_CLAIM"}
+      ],
+      "expected": {
+        "system_status": "PENDING_REVIEW",
+        "human_status": "FULLY_CORROBORATED",
+        "covered_amount": "72000.00",
+        "uncovered_amount": "0",
+        "disputed_amount": "0",
+        "risk_codes": [],
+        "duplicate_group_count": 0
+      }
+    },
+    {
+      "id": "H02",
+      "title": "申明日期后两日到账",
+      "expected_candidate_ids": ["TX-H02-T001"],
+      "review_actions": [
+        {"transaction_id": "TX-H02-T001", "disposition": "INCLUDED", "reason_code": "MATCHED_CLAIM"}
+      ],
+      "expected": {
+        "system_status": "PENDING_REVIEW",
+        "human_status": "FULLY_CORROBORATED",
+        "covered_amount": "36000.00",
+        "uncovered_amount": "0",
+        "disputed_amount": "0",
+        "risk_codes": [],
+        "duplicate_group_count": 0
+      }
+    },
+    {
+      "id": "H03",
+      "title": "流水金额超过付款主张",
+      "expected_candidate_ids": ["TX-H03-T001"],
+      "review_actions": [
+        {"transaction_id": "TX-H03-T001", "disposition": "DISPUTED", "reason_code": "AMOUNT_MISMATCH"}
+      ],
+      "expected": {
+        "system_status": "PENDING_REVIEW",
+        "human_status": "PENDING_REVIEW",
+        "covered_amount": "0",
+        "uncovered_amount": "45000.00",
+        "disputed_amount": "50000.00",
+        "risk_codes": ["AMOUNT_EXCEEDS_CLAIM"],
+        "duplicate_group_count": 0
+      }
+    },
+    {
+      "id": "H04",
+      "title": "被害人陈述日期冲突",
+      "expected_candidate_ids": ["TX-H04-T001"],
+      "review_actions": [
+        {"transaction_id": "TX-H04-T001", "disposition": "INCLUDED", "reason_code": "MATCHED_CLAIM"}
+      ],
+      "expected": {
+        "system_status": "CONFLICTING",
+        "human_status": "CONFLICTING",
+        "covered_amount": "25000.00",
+        "uncovered_amount": "15000.00",
+        "disputed_amount": "0",
+        "risk_codes": ["STATEMENT_DATE_CONFLICT"],
+        "duplicate_group_count": 0
+      }
+    },
+    {
+      "id": "H05",
+      "title": "被害人陈述收款人冲突",
+      "expected_candidate_ids": ["TX-H05-T001"],
+      "review_actions": [
+        {"transaction_id": "TX-H05-T001", "disposition": "INCLUDED", "reason_code": "MATCHED_CLAIM"}
+      ],
+      "expected": {
+        "system_status": "CONFLICTING",
+        "human_status": "CONFLICTING",
+        "covered_amount": "60000.00",
+        "uncovered_amount": "0",
+        "disputed_amount": "0",
+        "risk_codes": ["STATEMENT_RECIPIENT_CONFLICT"],
+        "duplicate_group_count": 0
+      }
+    }
+  ]
+}

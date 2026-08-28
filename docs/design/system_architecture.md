@@ -36,7 +36,7 @@ flowchart LR
 
 ## 3. 模型边界
 
-`MockProvider` 和 `DeepSeekProvider` 共享结构化接口。模型输出必须经过 Pydantic 校验，
+`MockProvider`、`OpenAIProvider` 和 `DeepSeekProvider` 共享结构化接口。模型输出必须经过 Pydantic 校验，
 并且 `source_text` 必须真实存在于输入原文；程序重新计算字符位置，不信任模型提供的偏移。
 模型不能写数据库、计算金额、决定交易纳入状态或生成 `HUMAN_CONFIRMED`。
 
@@ -49,4 +49,3 @@ flowchart LR
 
 上传文件只在当前进程内解析，默认不保存。用户主动启用本地保存时，SQLite 只保存结构化
 结果，不保存原文件，账号脱敏后写入。报告与界面同样只显示账号末四位。
-

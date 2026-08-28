@@ -177,6 +177,31 @@ class TransactionReviewAction(BaseModel):
     ]
     note: str | None = None
 
+    @model_validator(mode="after")
+    def reason_matches_disposition(self):
+        allowed_reasons = {
+            "INCLUDED": {"MATCHED_CLAIM", "OTHER"},
+            "EXCLUDED": {
+                "DUPLICATE_TRANSACTION",
+                "UNRELATED_TRANSACTION",
+                "ACCOUNT_MISMATCH",
+                "DATE_MISMATCH",
+                "OTHER",
+            },
+            "DISPUTED": {
+                "THIRD_PARTY_RECIPIENT",
+                "ACCOUNT_MISMATCH",
+                "AMOUNT_MISMATCH",
+                "DATE_MISMATCH",
+                "OTHER",
+            },
+        }
+        if self.reason_code not in allowed_reasons[self.disposition]:
+            raise ValueError(
+                f"reason_code {self.reason_code} is incompatible with disposition {self.disposition}"
+            )
+        return self
+
 
 class ReviewDecision(BaseModel):
     id: str

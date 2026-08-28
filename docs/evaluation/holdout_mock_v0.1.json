@@ -1,0 +1,203 @@
+{
+  "schema_version": "0.1.0",
+  "provider": "mock-v0.1",
+  "summary": {
+    "declared_cases": 5,
+    "evaluated_cases": 5,
+    "passed_cases": 5,
+    "case_pass_rate": 1.0,
+    "check_pass_rate": 1.0,
+    "format_pass_rate": 1.0,
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "average_latency_ms": 0.0
+  },
+  "cases": [
+    {
+      "id": "H01",
+      "title": "不同主体与金额的单笔精确覆盖",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-H01-T001"
+        ],
+        "system_status": "PENDING_REVIEW",
+        "human_status": "FULLY_CORROBORATED",
+        "covered_amount": "72000.00",
+        "uncovered_amount": "0.00",
+        "disputed_amount": "0",
+        "risk_codes": [],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "latency_ms": 0
+      },
+      "error": null
+    },
+    {
+      "id": "H02",
+      "title": "申明日期后两日到账",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-H02-T001"
+        ],
+        "system_status": "PENDING_REVIEW",
+        "human_status": "FULLY_CORROBORATED",
+        "covered_amount": "36000.00",
+        "uncovered_amount": "0.00",
+        "disputed_amount": "0",
+        "risk_codes": [],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "latency_ms": 0
+      },
+      "error": null
+    },
+    {
+      "id": "H03",
+      "title": "流水金额超过付款主张",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-H03-T001"
+        ],
+        "system_status": "PENDING_REVIEW",
+        "human_status": "PENDING_REVIEW",
+        "covered_amount": "0",
+        "uncovered_amount": "45000.00",
+        "disputed_amount": "50000.00",
+        "risk_codes": [
+          "AMOUNT_EXCEEDS_CLAIM"
+        ],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "latency_ms": 0
+      },
+      "error": null
+    },
+    {
+      "id": "H04",
+      "title": "被害人陈述日期冲突",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-H04-T001"
+        ],
+        "system_status": "CONFLICTING",
+        "human_status": "CONFLICTING",
+        "covered_amount": "25000.00",
+        "uncovered_amount": "15000.00",
+        "disputed_amount": "0",
+        "risk_codes": [
+          "STATEMENT_DATE_CONFLICT"
+        ],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "latency_ms": 0
+      },
+      "error": null
+    },
+    {
+      "id": "H05",
+      "title": "被害人陈述收款人冲突",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-H05-T001"
+        ],
+        "system_status": "CONFLICTING",
+        "human_status": "CONFLICTING",
+        "covered_amount": "60000.00",
+        "uncovered_amount": "0.00",
+        "disputed_amount": "0",
+        "risk_codes": [
+          "STATEMENT_RECIPIENT_CONFLICT"
+        ],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "latency_ms": 0
+      },
+      "error": null
+    }
+  ]
+}

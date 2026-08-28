@@ -1,0 +1,2 @@
+transaction_id,date,time,payer,payer_account,payee,payee_account,amount,remark
+H02-T001,2026-04-12,14:20:00,孙某,62222002,陈某,62172002,36000,项目保证金
