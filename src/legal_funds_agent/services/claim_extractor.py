@@ -26,11 +26,12 @@ def extract_claims(text: str, *, case_id: str, evidence_id: str, provider: LLMPr
             source_text=source_text,
         )
         claim = Claim(
-            id=f"CLM-{index:03d}", case_id=case_id, victim_name=row["victim_name"],
+            # Claim identifiers are globally stored, so include the case namespace.
+            id=f"CLM-{case_id}-{index:03d}", case_id=case_id, victim_name=row["victim_name"],
             alleged_recipient_name=row.get("alleged_recipient_name"),
             claimed_amount=Decimal(str(row["claimed_amount"])).quantize(Decimal("0.01")),
             time_start=row["time_start"], time_end=row["time_end"],
-            source_locator_ids=[locator_id], extraction_status="model_extracted",
+            source_locator_ids=[locator_id], source_locators=[locator], extraction_status="model_extracted",
         )
         claims.append(claim)
         locators.append(locator)

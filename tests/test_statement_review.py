@@ -27,7 +27,21 @@ class StatementReviewTest(unittest.TestCase):
         self.assertEqual(result.statement_conflicts, ["STATEMENT_AMOUNT_CONFLICT"])
         self.assertEqual(result.system_decision.status.value, "CONFLICTING")
 
+    def test_statement_amount_accepts_thousands_separators(self):
+        result = run_case_inputs(
+            indictment_text="何某于2025年3月12日收取被害人朱某人民币7368000元。",
+            statement_text=(
+                "从2025年3月12日开始，我按照何某的要求分很多次转钱。"
+                "经逐笔核对，我总共转出7,368,000元。"
+            ),
+            csv_text=(
+                "transaction_id,date,time,payer,payer_account,payee,payee_account,amount,remark\n"
+                "T001,2025-03-12,10:00:00,朱某,A001,何某,A002,7368000,项目款\n"
+            ),
+        )
+        self.assertEqual(result.statement_fact.amount, 7368000)
+        self.assertEqual(result.statement_conflicts, [])
+
 
 if __name__ == "__main__":
     unittest.main()
-

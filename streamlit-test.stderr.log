@@ -1,0 +1,3 @@
+2026-09-04 12:56:07.262 Uvicorn server started on :::8501
+2026-09-04 12:56:09.427 Did not auto detect external IP.
+Please go to https://docs.streamlit.io/ for debugging hints.

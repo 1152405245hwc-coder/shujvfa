@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,6 +42,10 @@ class WorkflowResult:
     candidates: list[CandidateMatch]
     system_decision: ReviewDecision
     audit_events: list[AuditEvent]
+    claims: list[Claim] = field(default_factory=list)
+    candidates_by_claim: dict[str, list[CandidateMatch]] = field(default_factory=dict)
+    system_decisions_by_claim: dict[str, ReviewDecision] = field(default_factory=dict)
+
 
 
 class WorkflowExecutionError(RuntimeError):
@@ -60,7 +64,8 @@ def _hash_text(value: str) -> str:
 
 def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
                     case_id: str = "CASE-0001", task_id: str = "TASK-0001",
-                    provider: LLMProvider | None = None) -> WorkflowResult:
+                    provider: LLMProvider | None = None,
+                    allow_multiple_claims: bool = False) -> WorkflowResult:
     logs: list[AuditEvent] = []
     provider = provider or MockProvider()
     step, tool, started, step_input = "claim_extraction", f"{provider.name}_structured", datetime.now(timezone.utc), indictment_text
@@ -68,7 +73,9 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
         claims, claim_locators = extract_claims(
             indictment_text, case_id=case_id, evidence_id="EVI-INDICTMENT", provider=provider
         )
-        if len(claims) != 1:
+        if not claims:
+            raise ValueError("No PaymentClaim extracted from indictment")
+        if not allow_multiple_claims and len(claims) != 1:
             raise ValueError("V0.1 MVP currently supports exactly one PaymentClaim")
         claim = claims[0]
         metrics = getattr(provider, "last_call_metrics", {})
@@ -98,14 +105,23 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
         ))
 
         step, tool, started, step_input = "candidate_matcher", "candidate_matcher_v0.1", datetime.now(timezone.utc), claim.model_dump_json()
-        candidates = match_claim_transactions(claim, transactions)
+        candidates_by_claim: dict[str, list[CandidateMatch]] = {}
+        system_decisions_by_claim: dict[str, ReviewDecision] = {}
         system_risks = list(statement_conflicts)
         if duplicate_groups:
             system_risks.append("DUPLICATE_TRANSACTION")
-        system_decision = build_decision(
-            claim, tx_index, has_pending_candidates=bool(candidates),
-            material_conflict=bool(system_risks), reason_codes=system_risks,
-        )
+
+        for c in claims:
+            c_candidates = match_claim_transactions(c, transactions)
+            candidates_by_claim[c.id] = c_candidates
+            c_decision = build_decision(
+                c, tx_index, has_pending_candidates=bool(c_candidates),
+                material_conflict=bool(system_risks), reason_codes=system_risks,
+            )
+            system_decisions_by_claim[c.id] = c_decision
+
+        candidates = candidates_by_claim[claim.id]
+        system_decision = system_decisions_by_claim[claim.id]
         logs.append(completed_event(
             task_id, case_id, step, tool, started,
             input_hash=_hash_text(step_input), output_hash=_hash_text(str(candidates)),
@@ -128,6 +144,9 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
         candidates=candidates,
         system_decision=system_decision,
         audit_events=logs,
+        claims=claims,
+        candidates_by_claim=candidates_by_claim,
+        system_decisions_by_claim=system_decisions_by_claim,
     )
 
 
@@ -146,7 +165,15 @@ def confirm_claim_extraction(claim: Claim) -> Claim:
     return claim.model_copy(update={"extraction_status": "human_confirmed"})
 
 
-def confirm_transactions(result: WorkflowResult, transaction_ids: list[str], *, reviewer: str) -> tuple[ReviewDecision, dict]:
+def confirm_all_claims(claims: list[Claim]) -> list[Claim]:
+    return [confirm_claim_extraction(c) for c in claims]
+
+
+def confirm_transactions(result: WorkflowResult, transaction_ids: list[str], *, reviewer: str, claim_id: str | None = None) -> tuple[ReviewDecision, dict]:
+    target_claim = result.claim
+    if claim_id:
+        target_claim = next((c for c in (result.claims or [result.claim]) if c.id == claim_id), result.claim)
+    candidates = result.candidates_by_claim.get(target_claim.id, result.candidates) if result.candidates_by_claim else result.candidates
     included = set(transaction_ids)
     actions = [
         TransactionReviewAction(
@@ -154,17 +181,22 @@ def confirm_transactions(result: WorkflowResult, transaction_ids: list[str], *, 
             disposition="INCLUDED" if candidate.transaction_id in included else "EXCLUDED",
             reason_code="MATCHED_CLAIM" if candidate.transaction_id in included else "UNRELATED_TRANSACTION",
         )
-        for candidate in result.candidates
+        for candidate in candidates
     ]
-    return review_transactions(result, actions, reviewer=reviewer)
+    return review_transactions(result, actions, reviewer=reviewer, claim_id=target_claim.id)
 
 
 def review_transactions(result: WorkflowResult, actions: list[TransactionReviewAction], *, reviewer: str,
+                        claim_id: str | None = None,
                         note: str | None = None,
                         supersedes: ReviewDecision | None = None) -> tuple[ReviewDecision, dict]:
-    if result.claim.extraction_status != "human_confirmed":
+    target_claim = result.claim
+    if claim_id and claim_id != result.claim.id:
+        target_claim = next((c for c in (result.claims or [result.claim]) if c.id == claim_id), result.claim)
+    if target_claim.extraction_status != "human_confirmed":
         raise ValueError("CLAIM_EXTRACTION_CONFIRMATION_REQUIRED")
-    candidate_ids = {candidate.transaction_id for candidate in result.candidates}
+    candidates = result.candidates_by_claim.get(target_claim.id, result.candidates) if result.candidates_by_claim else result.candidates
+    candidate_ids = {candidate.transaction_id for candidate in candidates}
     reviewed_ids = {action.transaction_id for action in actions}
     if len(reviewed_ids) != len(actions) or candidate_ids != reviewed_ids:
         raise ValueError("PENDING_CANDIDATE_REVIEW_REQUIRED")
@@ -172,13 +204,13 @@ def review_transactions(result: WorkflowResult, actions: list[TransactionReviewA
     included = [key for key, value in dispositions.items() if value == "INCLUDED"]
     excluded = [key for key, value in dispositions.items() if value == "EXCLUDED"]
     disputed = [key for key, value in dispositions.items() if value == "DISPUTED"]
-    previous = supersedes or result.system_decision
-    if previous.claim_id != result.claim.id:
+    previous = supersedes or result.system_decisions_by_claim.get(target_claim.id, result.system_decision)
+    if previous.claim_id != target_claim.id:
         raise ValueError("SUPERSEDES_CLAIM_MISMATCH")
-    if previous.case_id != result.claim.case_id:
+    if previous.case_id != target_claim.case_id:
         raise ValueError("SUPERSEDES_CASE_MISMATCH")
     decision = build_decision(
-        result.claim,
+        target_claim,
         result.transactions,
         included=included, excluded=excluded, disputed=disputed,
         decision_type=DecisionType.HUMAN_CONFIRMED,
@@ -200,23 +232,25 @@ def review_transactions(result: WorkflowResult, actions: list[TransactionReviewA
         "disputed_count": len(disputed),
     }
     result.audit_events.append(completed_event(
-        result.task_id, result.claim.case_id, "human_review", "manual_review_v0.1",
+        result.task_id, target_claim.case_id, "human_review", "manual_review_v0.1",
         review_started, details=counts,
     ))
     verification_started = datetime.now(timezone.utc)
-    errors = verify_decision(result.claim, decision, result.transactions)
+    errors = verify_decision(target_claim, decision, result.transactions)
     if errors:
         decision.verification_error_codes = errors
         error = ValueError(f"human confirmation blocked: {', '.join(errors)}")
         result.audit_events.append(failed_event(
-            result.task_id, result.claim.case_id, "verification", "verification_engine_v0.1",
+            result.task_id, target_claim.case_id, "verification", "verification_engine_v0.1",
             verification_started, error, details={"verification_error_codes": errors},
         ))
         raise error
     result.audit_events.append(completed_event(
-        result.task_id, result.claim.case_id, "verification", "verification_engine_v0.1",
+        result.task_id, target_claim.case_id, "verification", "verification_engine_v0.1",
         verification_started, details={"verification_error_codes": []},
     ))
+    if result.system_decisions_by_claim:
+        result.system_decisions_by_claim[target_claim.id] = decision
     return decision, build_report(
         result.claim, decision, result.transactions, claim_locators=result.claim_locators,
         statement_conflicts=result.statement_conflicts,

@@ -2,7 +2,7 @@
 
 面向诈骗类刑事案件的涉案资金证据审查与指控金额一致性核验工具。
 
-项目当前状态为 `V0.1 MVP core frozen`。审核请从 [REVIEW.md](REVIEW.md) 开始。
+项目当前状态为 `V0.1 MVP core frozen`。审核请从 [REVIEW.md](REVIEW.md) 开始；项目必读边界和 DeepSeek 使用原则见 [PROJECT_MUST_READ.md](PROJECT_MUST_READ.md)。
 
 ## 当前可运行能力
 
@@ -10,6 +10,8 @@
 候选匹配、逐笔处置及理由、确定性金额校验、版本化决定、不可静默覆盖的 SQLite 保存、
 来源定位、三种报告和最小审计日志。语义提取层可切换 Mock、OpenAI 或 DeepSeek，
 业务流程和确定性金额核心不依赖具体 Provider。V0.1 明确只支持单 Claim。
+Streamlit 工作台当前仅向操作人员开放本地 Mock 与 DeepSeek 两种模型入口；OpenAI 适配保留在代码层，
+不作为 UI 运行选项。
 
 ```powershell
 $env:PYTHONPATH='src'
@@ -24,6 +26,9 @@ $env:PYTHONPATH='src'
 $env:PYTHONPATH='src'
 .\.venv\Scripts\python.exe -m streamlit run ui\streamlit_app.py
 ```
+
+个人启动和自测也可以直接执行根目录脚本：[START_HERE.md](START_HERE.md)、`start_ui.ps1`、`run_checks.ps1`。
+上传材料支持 TXT/DOCX/文本型PDF，银行流水支持 CSV/XLSX/XLSM；扫描型PDF当前会明确提示需要 OCR。
 
 正式测试命令为：
 

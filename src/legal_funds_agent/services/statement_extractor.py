@@ -21,17 +21,26 @@ class StatementPaymentFact:
 
 def extract_statement_payment(text: str, *, victim_name: str) -> StatementPaymentFact:
     match = re.search(
-        r"(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日"
-        r".*?(?:按照|向)(?P<recipient>[\u4e00-\u9fff]{1,3}某)(?:的)?要求.*?"
-        r"(?:转款|转账|支付).*?(?:人民币)?(?P<amount>\d+(?:\.\d+)?)元",
+        r"(?:从)?(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日"
+        r".*?(?:按照|向)(?P<recipient>[\u4e00-\u9fff]{1,3}某)(?:的)?(?:要求|指示)?.*?"
+        r"(?:转款|转账|支付|转出|转了|转入|支付了|累计转入).*?(?:人民币)?(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)元",
         text,
+        re.DOTALL,
     )
+    if not match:
+        match = re.search(
+            r"(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日"
+            r".*?(?:转入|转给|转账给|付给)(?P<recipient>[\u4e00-\u9fff]{1,3}某).*?"
+            r"(?:人民币)?(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)元",
+            text,
+            re.DOTALL,
+        )
     if not match:
         raise ValueError("victim statement payment fact could not be extracted")
     return StatementPaymentFact(
         victim_name=victim_name,
         recipient_name=match["recipient"],
-        amount=Decimal(match["amount"]).quantize(Decimal("0.01")),
+        amount=Decimal(match["amount"].replace(",", "")).quantize(Decimal("0.01")),
         payment_date=date(int(match["year"]), int(match["month"]), int(match["day"])),
         source_text=match.group(0), start_offset=match.start(), end_offset=match.end(),
     )

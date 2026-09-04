@@ -107,6 +107,7 @@ class Claim(BaseModel):
     time_end: date
     payment_method: Literal["bank_transfer"] = "bank_transfer"
     source_locator_ids: list[str] = Field(min_length=1)
+    source_locators: list[SourceLocator] = Field(default_factory=list)
     extraction_status: Literal["model_extracted", "human_confirmed", "human_corrected", "extraction_review_required"]
 
     @model_validator(mode="after")
@@ -134,6 +135,7 @@ class Transaction(BaseModel):
     currency: Literal["CNY"] = "CNY"
     remark: str | None = None
     source_evidence_id: str
+    source_account_id: str | None = None
     source_row: int = Field(ge=1)
     dedup_fingerprint: str
 

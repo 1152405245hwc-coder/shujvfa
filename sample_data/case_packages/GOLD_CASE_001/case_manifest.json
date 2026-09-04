@@ -1,0 +1,28 @@
+{
+  "case_id": "GOLD_CASE_001",
+  "version": "0.2.0",
+  "visible": {
+    "documents": [
+      "visible/documents/01_起诉书.docx",
+      "visible/documents/03_证人证言.docx",
+      "visible/documents/04_被告人供述与辩解.docx",
+      "visible/documents/05_被害人陈述.docx"
+    ],
+    "bank_workbook": "visible/bank/02_银行流水账单.xlsx"
+  },
+  "hidden": {
+    "evaluation_notes": "hidden/90_隐藏评测说明.docx",
+    "truth_and_questions": "hidden/91_隐藏交易真值与题库.xlsx"
+  },
+  "derived": {
+    "victim_payments": "derived/victim_payments.csv"
+  },
+  "controls": {
+    "victim_payment_count": 18,
+    "victim_payment_total": 7368000,
+    "third_party_payment_total": 1250000,
+    "direct_payment_total": 6118000,
+    "refund_total": 1326000,
+    "securities_total": 1268000
+  }
+}

@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS audit_events (
     step TEXT NOT NULL,
     payload_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS investigation_items (
+    case_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY(case_id, item_id)
+);
 """
 
 
@@ -43,4 +50,3 @@ def connect(path: str | Path) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.executescript(SCHEMA)
     return connection
-
