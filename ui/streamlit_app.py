@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import csv
 import io
+import html
+import re
 import sys
 from contextlib import closing
 from datetime import date
@@ -15,7 +17,6 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from legal_funds_agent.persistence.database import connect
 from legal_funds_agent.persistence.repository import Repository
@@ -80,6 +81,36 @@ section.main > div { max-width:none; padding:2rem clamp(1.25rem, 4vw, 4.5rem) 4r
 .case-header-meta strong { color:#29404d; font-weight:700; }
 .case-header-meta .current { color:#1f5f8b; }
 .workspace-banner { display:none; }
+.case-masthead { border-bottom:1px solid var(--line); padding:8px 0 22px; margin:0 auto 24px; max-width:1360px; }
+.masthead-top { display:flex; justify-content:space-between; color:var(--muted); font-size:12px; letter-spacing:.04em; text-transform:uppercase; }
+.masthead-status { color:var(--amber); text-transform:none; }
+.case-masthead h1 { font-size:32px; line-height:1.15; margin:20px 0 4px; color:var(--ink); letter-spacing:-.02em; }
+.masthead-subtitle { font-size:17px; margin:0 0 12px; color:var(--blue); }
+.masthead-meta { color:var(--muted); font-size:13px; }
+.masthead-meta span { color:var(--gold); padding:0 6px; }
+.stat-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border-top:1px solid var(--line); border-bottom:1px solid var(--line); margin:18px 0 30px; }
+.stat-item { min-height:104px; padding:15px 18px 12px 0; border-right:1px solid var(--line); }
+.stat-item:not(:first-child) { padding-left:18px; }
+.stat-item:last-child { border-right:0; }
+.stat-label,.section-number,.source-kicker,.issue-kicker,.risk-kicker { font-size:11px; letter-spacing:.08em; color:var(--muted); text-transform:uppercase; }
+.stat-value { color:var(--blue); font-size:28px; line-height:1.15; font-weight:650; margin:9px 0 6px; }
+.stat-note { color:var(--muted); font-size:12px; }
+.section-heading { display:flex; align-items:baseline; gap:12px; border-bottom:1px solid var(--line); padding:9px 0 10px; margin:24px 0 15px; }
+.section-heading strong { color:var(--ink); font-size:16px; }
+.section-heading > span:last-child { color:var(--muted); font-size:12px; margin-left:auto; }
+.status-label { display:inline-block; font-size:12px; font-weight:650; }
+.status-label.ok { color:var(--green); }.status-label.partial { color:var(--amber); }.status-label.danger { color:var(--red); }.status-label.muted { color:var(--muted); }
+.source-quote { border-left:3px solid var(--gold); margin:14px 0; padding:12px 16px; background:#fbfbf9; }
+.source-quote blockquote { font-family:"Songti SC", "SimSun", "Noto Serif SC", serif; font-size:16px; line-height:1.75; margin:8px 0; color:#282b2f; }
+.source-quote figcaption { color:var(--muted); font-size:11px; }
+.review-issue,.risk-panel,.review-summary { border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:16px 0; margin:14px 0 22px; }
+.issue-kicker,.risk-kicker { display:flex; justify-content:space-between; }.issue-kicker span,.risk-kicker span { color:var(--amber); text-transform:none; letter-spacing:0; }
+.review-issue h3,.risk-panel h3 { margin:8px 0 14px; color:var(--ink); font-size:18px; }.risk-panel h3 strong { float:right; color:var(--blue); font-size:20px; }
+.issue-materials { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; padding:12px 0; border-top:1px solid #eceef0; border-bottom:1px solid #eceef0; }
+.issue-materials b,.risk-grid small { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }.issue-materials p { margin:6px 0 0; font-family:"Songti SC", "SimSun", serif; line-height:1.55; }
+.issue-conclusion,.issue-next { padding-top:12px; font-size:13px; }.issue-conclusion b,.issue-next b { color:var(--muted); font-size:11px; letter-spacing:.06em; }.issue-conclusion p,.issue-next p { margin:4px 0 0; }.issue-next { color:var(--blue); }
+.risk-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; border-top:1px solid #eceef0; padding-top:12px; }.risk-grid div { font-size:14px; }.risk-reason { color:var(--red); font-size:13px; margin-bottom:0; }
+.review-summary { background:#fff; padding:20px 22px; }.review-summary h2 { margin:8px 0; font-size:24px; }.review-summary p { max-width:800px; color:#475467; line-height:1.65; }
 .evidence-card { border:0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); border-radius:0; background:transparent; padding:16px 0; margin:14px 0 20px; box-shadow:none; }
 .evidence-card h4 { color:#16384a; margin:0 0 13px; font-size:15px; line-height:1.4; }
 .evidence-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px 20px; }
@@ -110,6 +141,7 @@ div[data-testid="stExpander"] { border:1px solid var(--line); border-radius:0; b
 *:focus-visible { outline:3px solid #315c83 !important; outline-offset:2px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
 @media (max-width: 760px) { .evidence-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .workspace-title { font-size:24px; } }
+@media (max-width: 760px) { .stat-strip,.issue-materials,.risk-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .stat-item:nth-child(2) { border-right:0; } .stat-item:nth-child(n+3) { border-top:1px solid var(--line); } }
 @media (max-width: 480px) { .evidence-grid { grid-template-columns:1fr; } section.main > div { padding-top:1.2rem; } }
 @media (max-width: 480px) {
     div[data-testid="stMetricValue"] p { font-size:17px; white-space:nowrap; }
@@ -174,46 +206,46 @@ def _supplementary_documents(result) -> list[dict[str, str]]:
 
 
 def _render_mermaid(code: str, *, height: int = 340) -> None:
-    """Render a compact, bounded diagram and keep a text fallback for offline review."""
-    graph_json = json.dumps(code, ensure_ascii=False)
-    components.html(
-        f"""
-<div id="fund-flow" style="width:100%;min-height:250px;overflow:auto;background:#fff;border:1px solid #d8e0e5;border-radius:6px;padding:12px;box-sizing:border-box;"></div>
-<script type="module">
-  const target = document.getElementById('fund-flow');
-  const graph = {graph_json};
-  try {{
-    const {{ default: mermaid }} = await import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs');
-    target.className = 'mermaid';
-    target.textContent = graph;
-    mermaid.initialize({{ startOnLoad: false, securityLevel: 'strict', theme: 'base',
-      themeVariables: {{ fontFamily: 'Inter, Microsoft YaHei, sans-serif', fontSize: '15px', primaryTextColor: '#102b3b', lineColor: '#52636d', edgeLabelBackground: '#ffffff' }},
-      flowchart: {{ useMaxWidth: false, htmlLabels: true, nodeSpacing: 24, rankSpacing: 34 }}
-    }});
-    await mermaid.run({{ nodes: [target] }});
-    const svg = target.querySelector('svg');
-    if (svg) {{
-      // Keep a readable natural width. A forced max-width scales dense graphs
-      // down until labels become harder to read than the source table.
-      const naturalWidth = svg.viewBox?.baseVal?.width || 720;
-      const readableWidth = Math.max(naturalWidth, Math.min(target.clientWidth - 24, 960));
-      svg.style.width = `${{readableWidth}}px`;
-      svg.style.maxWidth = 'none';
-      svg.style.height = 'auto';
-      svg.style.display = 'block';
-      svg.style.margin = '0 auto';
-    }}
-  }} catch (error) {{
-    target.innerHTML = '<pre style="margin:0;color:#64748b;font-size:12px;white-space:pre-wrap;">图形库未加载，以下为可复核的拓扑文本：</pre>';
-    const fallback = document.createElement('pre');
-    fallback.textContent = graph;
-    fallback.style.cssText = 'margin:8px 0 0;white-space:pre-wrap;color:#334155;font-size:12px;';
-    target.appendChild(fallback);
-  }}
-</script>
-""",
-        height=height,
-        scrolling=True,
+    """Render a local, dependency-free relationship diagram."""
+    node_re = re.compile(r'([A-Za-z0-9_]+)\["(.*?)"\]')
+    edge_re = re.compile(r'([A-Za-z0-9_]+)\s+(?:-->|==>|-\.->)\|"(.*?)"\|\s+([A-Za-z0-9_]+)')
+    nodes = {node_id: label.replace("<br/>", " / ") for node_id, label in node_re.findall(code)}
+    edges = edge_re.findall(code)
+    if not nodes:
+        _render_topology_text(code)
+        return
+    width, col_w, row_h = 1120, 330, 92
+    positions = {node_id: ((idx % 3) * col_w + 20, (idx // 3) * row_h + 38) for idx, node_id in enumerate(nodes)}
+    svg = [f'<svg viewBox="0 0 {width} {max(180, ((len(nodes)+2)//3)*row_h+60)}" role="img" aria-label="账户关系图" style="width:100%;height:auto;background:#fff;border:1px solid #d9dde3;">']
+    svg.append('<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#7b8794"/></marker></defs>')
+    for source, label, target in edges:
+        if source in positions and target in positions:
+            x1,y1=positions[source]; x2,y2=positions[target]
+            svg.append(f'<path d="M{x1+260},{y1} C{x1+290},{y1} {x2-30},{y2} {x2},{y2}" fill="none" stroke="#9aa6b2" stroke-width="1.5" marker-end="url(#arrow)"/>')
+            edge_label = html.escape(label.replace("&quot;", '"'))
+            svg.append(f'<text x="{(x1+x2)//2+120}" y="{(y1+y2)//2-5}" font-size="11" fill="#667085">{edge_label}</text>')
+    for node_id, label in nodes.items():
+        x,y=positions[node_id]
+        fill = "#f4ead6" if "关联第三方" in label else "#edf3f7"
+        svg.append(f'<rect x="{x}" y="{y-28}" width="260" height="56" rx="3" fill="{fill}" stroke="#18324a" stroke-width="1"/>')
+        svg.append(f'<text x="{x+12}" y="{y-5}" font-size="13" font-weight="600" fill="#15171a">{html.escape(label[:34])}</text>')
+        if len(label) > 34: svg.append(f'<text x="{x+12}" y="{y+14}" font-size="11" fill="#667085">{html.escape(label[34:68])}</text>')
+    svg.append('</svg>')
+    st.markdown('<div class="topology-shell">' + "".join(svg) + '</div>', unsafe_allow_html=True)
+
+
+def _render_topology_text(code: str) -> None:
+    """Reliable local fallback for the account map when Mermaid is unavailable."""
+    lines = []
+    for line in code.splitlines():
+        clean = line.strip()
+        if not clean or clean.startswith(("graph ", "%%", "classDef", "subgraph", "end")):
+            continue
+        lines.append(clean)
+    st.markdown(
+        '<div class="topology-shell"><div class="section-number">ACCOUNT RELATIONSHIP MAP</div>'
+        f'<pre>{html.escape(chr(10).join(lines) or "暂无资金流向数据")}</pre></div>',
+        unsafe_allow_html=True,
     )
 
 
@@ -378,6 +410,67 @@ def _header(title: str, subtitle: str) -> None:
     st.markdown(f'<p class="workspace-title">{title}</p><p class="workspace-subtitle">{subtitle}</p>', unsafe_allow_html=True)
 
 
+def render_case_masthead(case_id: str, *, status: str = "待人工复核", case_name: str | None = None,
+                         case_type: str = "诈骗案件", data_classification: str = "演示案件",
+                         review_stage: str = "证据审查") -> None:
+    """Render the single editorial case heading shared by the four workspaces."""
+    title = case_name or "资金证据核验"
+    st.markdown(
+        f'<header class="case-masthead"><div class="masthead-top"><span>CASE / {case_id}</span><span class="masthead-status">{status}</span></div>'
+        f'<h1>{title}</h1><p class="masthead-subtitle">资金证据核验</p>'
+        f'<div class="masthead-meta">{case_type} <span>·</span> {data_classification} <span>·</span> {review_stage}</div></header>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_stat_strip(items: list[tuple[str, str, str]]) -> None:
+    cells = "".join(
+        f'<div class="stat-item"><div class="stat-label">{label}</div><div class="stat-value">{value}</div><div class="stat-note">{note}</div></div>'
+        for label, value, note in items
+    )
+    st.markdown(f'<div class="stat-strip">{cells}</div>', unsafe_allow_html=True)
+
+
+def render_section_heading(number: str, title: str, subtitle: str | None = None) -> None:
+    extra = f'<span>{subtitle}</span>' if subtitle else ""
+    st.markdown(f'<div class="section-heading"><span class="section-number">{number}</span><strong>{title}</strong>{extra}</div>', unsafe_allow_html=True)
+
+
+def render_status_label(label: str, tone: str = "neutral") -> str:
+    symbols = {"ok": "✓", "partial": "◐", "danger": "!", "muted": "—", "excluded": "×"}
+    return f'<span class="status-label {tone}">{symbols.get(tone, "·")} {label}</span>'
+
+
+def render_source_quote(source: str, text: str, locator: str = "") -> None:
+    st.markdown(
+        f'<figure class="source-quote"><div class="source-kicker">SOURCE / {source}</div><blockquote>“{text}”</blockquote>'
+        f'<figcaption>{locator}</figcaption></figure>', unsafe_allow_html=True,
+    )
+
+
+def render_review_issue(issue_id: str, title: str, status: str, materials: list[dict], conclusion: str, next_action: str) -> None:
+    rows = "".join(f'<div><b>{m.get("source", "材料")}</b><p>{m.get("finding", "-")}</p></div>' for m in materials)
+    st.markdown(
+        f'<article class="review-issue"><div class="issue-kicker">REVIEW ISSUE / {issue_id} <span>{status}</span></div>'
+        f'<h3>{title}</h3><div class="issue-materials">{rows}</div><div class="issue-conclusion"><b>当前核验</b><p>{conclusion}</p></div>'
+        f'<div class="issue-next"><b>NEXT ACTION</b><p>{next_action}</p></div></article>', unsafe_allow_html=True,
+    )
+
+
+def render_high_risk_transaction(priority: str, tx, candidate) -> None:
+    st.markdown(
+        f'<article class="risk-panel"><div class="risk-kicker">{priority} · HIGH RISK TRANSACTION <span>! 待核查</span></div>'
+        f'<h3>{tx.transaction_id} <strong>¥{tx.amount:,.2f}</strong></h3>'
+        f'<div class="risk-grid"><div><small>日期</small>{tx.date}</div><div><small>付款人</small>{tx.payer_name or "-"}</div>'
+        f'<div><small>收款人</small>{tx.payee_name or "-"}</div><div><small>来源定位</small>{_source_locator_label(tx)}</div></div>'
+        f'<p class="risk-reason">{_risks_to_chinese(candidate.risk_codes)}</p></article>', unsafe_allow_html=True,
+    )
+
+
+def render_review_summary(title: str, text: str) -> None:
+    st.markdown(f'<div class="review-summary"><div class="section-number">REVIEW MEMO</div><h2>{title}</h2><p>{text}</p></div>', unsafe_allow_html=True)
+
+
 STATUS_LABELS = {
     "PENDING_REVIEW": "◌ 待人工复核",
     "PARTIALLY_CORROBORATED": "◐ 部分覆盖",
@@ -507,9 +600,7 @@ def case_page() -> None:
     active_case_id = current_result.claim.case_id if current_result is not None else "CASE-0001"
     data_label = "实战评测 GOLD_CASE_001" if active_case_id == "GOLD_CASE_001" else "演示案件"
     update_label = "已恢复本机签署快照" if st.session_state.get("decision") else "等待新操作"
-    st.markdown(f'<div class="case-header"><div class="case-header-top">案件审查 / {active_case_id}</div><p class="case-header-title">诈骗案件资金证据核验</p><p class="case-header-subtitle">张某等涉嫌诈骗案</p><div class="case-header-meta"><span>阶段：<strong class="current">证据审查</strong></span><span>数据：<strong>{data_label}</strong></span><span>最后更新：<strong>{update_label}</strong></span></div></div>', unsafe_allow_html=True)
-    _header("案件审查概览", "登记材料、查看资金证据核验进度并进入人工复核")
-    st.markdown('<div class="workspace-banner"><strong>资金链证审 · 诈骗案件资金证据核验工作台</strong><span>以材料来源为中心组织审查步骤，所有金额由确定性规则计算。</span></div>', unsafe_allow_html=True)
+    render_case_masthead(active_case_id, status=update_label, data_classification=data_label)
     case_id = st.text_input("案件编号", value=active_case_id)
     persist_locally = st.checkbox("保存脱敏后的本地案件记录", value=False, help="默认不保存上传材料；启用后仅写入本机 SQLite。")
     source_default = "实战评测(GOLD_CASE_001 · 736.8万)" if active_case_id == "GOLD_CASE_001" else "演示案件(D01)"
@@ -677,19 +768,20 @@ def case_page() -> None:
         total_candidates = sum(len(cands) for cands in result.candidates_by_claim.values()) if result.candidates_by_claim else len(result.candidates)
 
         if refund_total > 0:
-            m1, m2, m3, m4, m5 = st.columns(5)
-            m1.metric("指控涉案总额", f"¥{total_claimed:,.2f}")
-            m2.metric("疑似转回流水", f"¥{refund_total:,.2f}")
-            m3.metric("扣除疑似转回参考", f"¥{net_claimed:,.2f}")
-            m4.metric("流水证据覆盖", f"¥{covered:,.2f}")
-            m5.metric("待复核事项", f"{total_candidates if not decision else 0} 项")
+            render_stat_strip([
+                ("指控涉案总额", f"¥{total_claimed:,.2f}", "起诉书付款主张"),
+                ("疑似转回", f"¥{refund_total:,.2f}", "待核验性质"),
+                ("未返还参考", f"¥{net_claimed:,.2f}", "数学差额参考"),
+                ("待复核", f"{total_candidates if not decision else 0:02d}", "ITEMS"),
+            ])
             st.info(f"【疑似返还流水提示】按账户关系和唯一交易事件识别到 {len(refund_txs)} 笔、¥{refund_total:,.2f} 元可能转回被害人账户；摘要不能单独证明收益、分红或法定冲减性质，净额仅作待核验参考（¥{net_claimed:,.2f}）。")
         else:
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("付款指控总额" if len(claims_list) > 1 else "付款指控", f"¥{total_claimed:,.2f}")
-            m2.metric("资金证据覆盖", f"¥{covered:,.2f}")
-            m3.metric("尚未覆盖", f"¥{max(total_claimed - covered, Decimal('0')):,.2f}")
-            m4.metric("待复核事项", total_candidates if not decision else 0)
+            render_stat_strip([
+                ("付款指控总额" if len(claims_list) > 1 else "付款指控", f"¥{total_claimed:,.2f}", "起诉书付款主张"),
+                ("资金证据覆盖", f"¥{covered:,.2f}", "银行流水确认"),
+                ("尚未覆盖", f"¥{max(total_claimed - covered, Decimal('0')):,.2f}", "当前差额"),
+                ("待复核", f"{total_candidates if not decision else 0:02d}", "ITEMS"),
+            ])
 
         if len(claims_list) > 1:
             st.info(f"本案共提取到 {len(claims_list)} 笔涉案付款事实主张，可进入【资金证据核验】页分别复核。")
@@ -719,9 +811,9 @@ def case_page() -> None:
 
 
 def transactions_page(result) -> None:
-    _header("证据与资金流水", "检查标准化资金底册、原始来源行号与重点资金流向")
+    render_case_masthead(result.claim.case_id, status="待人工复核" if "decision" not in st.session_state else "复核已完成", data_classification="实战评测" if result.claim.case_id == "GOLD_CASE_001" else "演示案件", review_stage="资金流水")
 
-    st.markdown('<div class="section-kicker">全案资金穿透流向拓扑图谱</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-kicker">资金摘要</div>', unsafe_allow_html=True)
     from legal_funds_agent.services.topology_service import build_fund_flow_topology, generate_mermaid_graph
     claims = result.claims if result.claims else [result.claim]
     decision = st.session_state.get("decision")
@@ -740,13 +832,15 @@ def transactions_page(result) -> None:
     all_topo = build_fund_flow_topology(claims, result.transactions, decision)
     mermaid_code = generate_mermaid_graph(topo, compact=True)
 
-    st.markdown("**重点关联资金流**")
-    st.caption("图中按账户关系聚合唯一事件；蓝色=付款来源，红色=一级收款账户，黄色=关联第三方。逐笔证据定位见下方台账。")
-    _render_mermaid(mermaid_code, height=330)
-    st.caption(f"默认只展示重点关联资金：{len(topo.nodes)} 个账户节点、{len(topo.edges)} 条唯一事件；流水号、原始行号和处置理由在下方台账查看。")
-    with st.expander("查看详细拓扑（含单笔日期与处置状态）", expanded=False):
-        st.caption(f"全量底册：{len(all_topo.nodes)} 个账户节点、{len(all_topo.edges)} 条唯一事件。")
-        _render_mermaid(generate_mermaid_graph(all_topo, compact=False), height=560)
+    direct_total = sum((tx.amount for tx in pay_txs), Decimal("0")) if 'pay_txs' in locals() else sum((tx.amount for tx in result.transactions.values() if tx.id in candidate_ids), Decimal("0"))
+    third_party_total = sum((tx.amount for tx in result.transactions.values() if tx.id in candidate_ids and tx.payee_account_id and tx.payee_account_id != tx.payee_account), Decimal("0"))
+    render_stat_strip([
+        ("被害人支付", f"¥{sum((c.claimed_amount for c in claims), Decimal('0')):,.2f}", "CLAIM"),
+        ("直接账户收款", f"¥{direct_total:,.2f}", "ACCOUNT FLOW"),
+        ("第三方账户", f"¥{third_party_total:,.2f}", "待核验"),
+        ("疑似转回", f"¥{sum((tx.amount for tx in refund_txs), Decimal('0')):,.2f}", "待核验性质"),
+    ])
+    st.markdown('<div class="section-kicker">资金底册</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="section-kicker">涉案银行流水分类台账</div>', unsafe_allow_html=True)
     st.caption("银行流水按资金方向和账户关系区分为【涉案支付流出】与【疑似转回流水】，所有性质仍需人工核验。")
@@ -788,10 +882,11 @@ def transactions_page(result) -> None:
     sum_pay = sum((t[0].amount for t in pay_txs), Decimal("0"))
     sum_refund = sum((t[0].amount for t in refund_txs), Decimal("0"))
 
-    tab_pay, tab_refund, tab_all = st.tabs([
+    tab_pay, tab_refund, tab_all, tab_graph = st.tabs([
         f"涉案流出支付流水 ({len(pay_txs)} 笔 · ¥{sum_pay:,.2f})",
         f"疑似转回流水 ({len(refund_txs)} 笔 · ¥{sum_refund:,.2f})",
         f"全案银行流水总底册 ({len(all_rows)} 笔)",
+        "账户关系图",
     ])
 
     with tab_pay:
@@ -810,9 +905,16 @@ def transactions_page(result) -> None:
         st.dataframe(filtered_rows, width="stretch", hide_index=True)
         st.caption(f"全案总计导入 {len(result.transactions)} 笔原始银行记录；当前筛选显示 {len(filtered_rows)} 笔。前两类台账按 canonical 唯一事件展示。")
 
+    with tab_graph:
+        st.markdown('<div class="section-kicker">账户关系图</div>', unsafe_allow_html=True)
+        st.caption(f"重点关联资金：{len(topo.nodes)} 个账户节点、{len(topo.edges)} 条唯一事件。")
+        _render_mermaid(mermaid_code, height=330)
+        with st.expander("查看详细拓扑（含单笔日期与处置状态）", expanded=False):
+            _render_mermaid(generate_mermaid_graph(all_topo, compact=False), height=560)
+
 
 def review_page(result) -> None:
-    _header("资金证据核验", "核对事实主张、资金流水与材料冲突，并完成人工复核")
+    render_case_masthead(result.claim.case_id, status="待人工复核" if "decision" not in st.session_state else "复核已完成", data_classification="实战评测" if result.claim.case_id == "GOLD_CASE_001" else "演示案件", review_stage="人工复核")
     claims_list = result.claims if result.claims else [result.claim]
     if len(claims_list) > 1:
         claim_map = {
@@ -854,12 +956,12 @@ def review_page(result) -> None:
     net_claim = max(claim.claimed_amount - total_refund, Decimal("0"))
 
     if total_refund > 0:
-        a, b, c, d, e = st.columns(5)
-        a.metric("指控支付总额", f"¥{claim.claimed_amount:,.2f}")
-        b.metric("疑似转回流水", f"¥{total_refund:,.2f}")
-        c.metric("扣除疑似转回参考", f"¥{net_claim:,.2f}")
-        d.metric("待核候选流水", f"{len(candidates)} 笔")
-        e.metric("当前核验状态", _status_label(sys_decision.status.value))
+        render_stat_strip([
+            ("指控支付总额", f"¥{claim.claimed_amount:,.2f}", "CLAIM"),
+            ("疑似转回流水", f"¥{total_refund:,.2f}", "待核验性质"),
+            ("未返还参考", f"¥{net_claim:,.2f}", "数学差额"),
+            ("待核候选", f"{len(candidates):02d}", "ITEMS"),
+        ])
 
         with st.expander(f"【疑似转回流水台账】按账户关系识别 {len(refund_list)} 笔（共计 ¥{total_refund:,.2f}），待人工核验", expanded=True):
             st.info("系统只依据账户关系、方向和唯一交易事件展示候选；摘要中的“收益”“分红”“份额”等文字不能单独证明返还性质或法定冲减效果。")
@@ -877,11 +979,12 @@ def review_page(result) -> None:
                 })
             st.dataframe(r_rows, width="stretch", hide_index=True)
     else:
-        a, b, c, d = st.columns(4)
-        a.metric("指控涉案金额", f"¥{claim.claimed_amount:,.2f}")
-        b.metric("召回候选流水", f"{len(candidates)} 笔")
-        c.metric("当前核验状态", _status_label(sys_decision.status.value))
-        d.metric("材料冲突标记", f"{len(result.statement_conflicts)} 项")
+        render_stat_strip([
+            ("指控涉案金额", f"¥{claim.claimed_amount:,.2f}", "CLAIM"),
+            ("召回候选流水", f"{len(candidates):02d}", "TRANSACTIONS"),
+            ("当前核验状态", _status_label(sys_decision.status.value), "STATUS"),
+            ("材料冲突标记", f"{len(result.statement_conflicts):02d}", "ITEMS"),
+        ])
 
     st.markdown(f"""
 <div style="background:#f8fafc;border-left:4px solid #1f5f8b;padding:12px 16px;border-radius:0 6px 6px 0;margin:12px 0;">
@@ -891,8 +994,7 @@ def review_page(result) -> None:
 
     with st.expander("查看起诉书事实主张原文出处与字符偏移", expanded=False):
         for locator in result.claim_locators:
-            st.caption(f"证据编号：{locator.evidence_id} · 原文文本字符位置：{locator.start_offset}–{locator.end_offset}")
-            st.code(locator.source_text or "（无原文片段）", language=None)
+            render_source_quote("INDICTMENT", locator.source_text or "（无原文片段）", f"{locator.evidence_id} · chars {locator.start_offset}–{locator.end_offset}")
 
     # 步骤一：核准事实主张
     if not is_claim_confirmed:
@@ -926,19 +1028,12 @@ def review_page(result) -> None:
 
     supplementary_documents = _supplementary_documents(result)
     conflict_matrix = build_evidence_conflict_matrix(result.transactions, supplementary_documents)
-    with st.expander("证据冲突与争议焦点（辅助核验视图）", expanded=bool(conflict_matrix)):
-        if not conflict_matrix:
-            st.info("尚未登记证人证言或被告人供述，当前只显示资金流水核验队列。")
-        else:
-            st.caption("这些焦点用于把资金事实和言词材料放在同一处回查；系统不据此自动生成法律结论。")
-            for conflict in conflict_matrix:
-                st.markdown(f"#### {conflict['id']} · {conflict['title']} · {conflict['priority']}优先")
-                st.dataframe(conflict["materials"], width="stretch", hide_index=True, column_config={
-                    "source": st.column_config.TextColumn("材料", width="medium"),
-                    "finding": st.column_config.TextColumn("核验摘录", width="large"),
-                })
-                st.warning(f"当前判断：{conflict['conclusion']}")
-                st.info(f"下一步回查：{conflict['next_action']}")
+    render_section_heading("02", "证据冲突与争议焦点", "言词材料与资金流水的并列回查")
+    if conflict_matrix:
+        for conflict in conflict_matrix:
+            render_review_issue(conflict["id"], conflict["title"], f"! {conflict['priority']}优先", conflict["materials"], conflict["conclusion"], conflict["next_action"])
+    else:
+        st.markdown('<div class="review-summary"><strong>当前没有登记补充言词材料。</strong><p>资金流水核验队列仍可继续处理。</p></div>', unsafe_allow_html=True)
 
     # Risk-first ordering keeps the audit queue aligned with review necessity.
     candidates = sort_candidates_for_review(candidates, result.transactions)
@@ -950,32 +1045,10 @@ def review_page(result) -> None:
     st.caption(f"已按审核必要性排序：P1 优先处理阻断风险，其次按风险分、金额和日期排列；重点核查 {len(high_risk_candidates)} 笔，常规候选 {len(candidates) - len(high_risk_candidates)} 笔。")
 
     if high_risk_candidates:
-        st.markdown("#### 先处理：重点审核队列")
-        priority_rows = []
+        render_section_heading("03", "高风险交易", "逐笔核验，不进入批量采纳")
         for candidate in high_risk_candidates:
             tx = result.transactions[candidate.transaction_id]
-            priority_rows.append({
-                "审核顺序": f"P{review_order[candidate.transaction_id]}",
-                "流水号": tx.transaction_id,
-                "金额": f"¥{tx.amount:,.2f}",
-                "风险提示": _risks_to_chinese(candidate.risk_codes),
-                "原始证据定位": _source_locator_label(tx),
-            })
-        st.dataframe(priority_rows, width="stretch", hide_index=True)
-        with st.expander("查看重点候选完整上下文", expanded=False):
-            for candidate in high_risk_candidates:
-                tx = result.transactions[candidate.transaction_id]
-                _evidence_card(
-                    f"P{review_order[candidate.transaction_id]} · 候选流水 {tx.transaction_id}",
-                    [("付款人", f"{tx.payer_name or '-'}  {_mask(tx.payer_account)}"),
-                     ("收款人", f"{tx.payee_name or '-'}  {_mask(tx.payee_account)}"),
-                     ("交易日期", str(tx.date)),
-                     ("金额", f"¥{tx.amount:,.2f}"),
-                     ("原始证据定位", _source_locator_label(tx)),
-                     ("核查规则", _rules_to_chinese(candidate.matched_rules)),
-                     ("风险提示", _risks_to_chinese(candidate.risk_codes))],
-                    ("需重点核查", "danger"),
-                )
+            render_high_risk_transaction(f"P{review_order[candidate.transaction_id]}", tx, candidate)
 
     state_disp_key = f"candidate_disps_{claim.id}"
     state_reason_key = f"candidate_reasons_{claim.id}"
@@ -1149,7 +1222,7 @@ def review_page(result) -> None:
 
 
 def audit_page(result) -> None:
-    _header("审查结论与留痕", "查看审计留痕、数据完整性校验、复核底稿与后续回查事项")
+    render_case_masthead(result.claim.case_id, status="复核已完成" if st.session_state.get("decision") else "待人工复核", data_classification="实战评测" if result.claim.case_id == "GOLD_CASE_001" else "演示案件", review_stage="审查结论")
     st.subheader("全案审计留痕日志（电子证据链完整性）")
 
     step_map = {
@@ -1187,12 +1260,14 @@ def audit_page(result) -> None:
     if not report or not decision:
         st.info("完成涉案主张人工复核后可查看和导出复核底稿。")
         return
-    a, b, c = st.columns(3)
-    a.metric("人工复核状态", _status_label(decision.status.value))
-    b.metric("资金证据覆盖", f"¥{decision.covered_amount:,.2f}")
-    c.metric("未覆盖金额", f"¥{decision.uncovered_amount:,.2f}")
+    render_stat_strip([
+        ("人工复核状态", _status_label(decision.status.value), "STATUS"),
+        ("资金证据覆盖", f"¥{decision.covered_amount:,.2f}", "VERIFIED"),
+        ("未覆盖金额", f"¥{decision.uncovered_amount:,.2f}", "GAP"),
+        ("复核版本", f"v{decision.version}", "REVIEW MEMO"),
+    ])
     st.markdown('<div class="section-kicker">人工复核确认结果</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="evidence-card"><h4>资金证据核验结论 <span class="status-badge {_status_class(decision.status.value)}">{_status_label(decision.status.value)}</span></h4><p>当前材料中，已人工纳入流水 {len(decision.included_transaction_ids)} 笔，共计人民币 ¥{decision.covered_amount:,.2f}；尚未覆盖 ¥{decision.uncovered_amount:,.2f}。</p><span class="evidence-label">复核人</span><span class="evidence-value">{decision.reviewer or "未填写"}</span></div>', unsafe_allow_html=True)
+    render_review_summary("资金证据核验结果", f"当前材料中，已人工纳入流水 {len(decision.included_transaction_ids)} 笔，共计人民币 ¥{decision.covered_amount:,.2f}；尚未覆盖 ¥{decision.uncovered_amount:,.2f}。复核人：{decision.reviewer or '未填写'}。")
     st.markdown('<div class="legal-notice">' + report["disclaimer"] + '</div>', unsafe_allow_html=True)
     topo_mermaid = report.get("fund_flow_topology")
     if topo_mermaid:
@@ -1231,12 +1306,12 @@ def audit_page(result) -> None:
     st.markdown('<div class="section-kicker">全案资金核验底稿</div>', unsafe_allow_html=True)
     st.subheader("全案资金证据核验底稿")
 
-    col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
-    col_s1.metric("指控涉案总额", f"¥{master_summary.get('total_claimed_amount', 0.0):,.2f}")
-    col_s2.metric("疑似转回流水", f"¥{ref_amt:,.2f}")
-    col_s3.metric("扣除疑似转回参考", f"¥{net_amt:,.2f}")
-    col_s4.metric("已确证覆盖金额", f"¥{master_summary.get('total_covered_amount', 0.0):,.2f}")
-    col_s5.metric("未覆盖资金缺口", f"¥{master_summary.get('total_uncovered_amount', 0.0):,.2f}")
+    render_stat_strip([
+        ("指控涉案总额", f"¥{master_summary.get('total_claimed_amount', 0.0):,.2f}", "CLAIM"),
+        ("疑似转回流水", f"¥{ref_amt:,.2f}", "待核验性质"),
+        ("未返还参考", f"¥{net_amt:,.2f}", "数学差额"),
+        ("已确证覆盖", f"¥{master_summary.get('total_covered_amount', 0.0):,.2f}", "VERIFIED"),
+    ])
 
     if ref_amt > 0:
         st.info(f"【疑似转回流水核对】按账户关系和唯一交易事件识别到 {len(identify_refund_transactions(claims_list, result.transactions.values()))} 笔、¥{ref_amt:,.2f} 元可能转入被害人账户；摘要不能单独证明返还性质或法定冲减效果，¥{net_amt:,.2f} 仅为参考值。")
@@ -1257,7 +1332,7 @@ def audit_page(result) -> None:
         _save_investigation_items(st.session_state.get("repository_path"), result.claim.case_id, checklist)
         master_rep["investigation_checklist"] = checklist
         pending_count = sum(item.get("status") != "已核查" for item in checklist)
-        st.metric("待核查建议", f"{pending_count} 项")
+        st.markdown(f'<div class="review-summary"><div class="section-number">FOLLOW-UP</div><strong>待核查建议</strong><div class="stat-value">{pending_count:02d}</div></div>', unsafe_allow_html=True)
 
     master_html = case_report_to_html(master_rep)
     master_json = case_report_to_json(master_rep)
@@ -1314,11 +1389,10 @@ if result is not None:
     claim_events = [e for e in getattr(result, "audit_events", []) if getattr(e, "step", None) == "claim_extraction"]
     if claim_events and getattr(claim_events[-1], "input_tokens", None) is not None and claim_events[-1].input_tokens > 0:
         ce = claim_events[-1]
-        st.sidebar.divider()
-        st.sidebar.markdown("### 模型调用指标看板")
-        st.sidebar.metric("接口响应耗时", f"{ce.latency_ms or 0} ms")
-        st.sidebar.metric("Prompt Tokens", f"{ce.input_tokens}")
-        st.sidebar.metric("Output Tokens", f"{ce.output_tokens or 0}")
+        with st.sidebar.expander("技术诊断", expanded=False):
+            st.write(f"响应耗时 · {ce.latency_ms or 0} ms")
+            st.write(f"Prompt Tokens · {ce.input_tokens}")
+            st.write(f"Output Tokens · {ce.output_tokens or 0}")
 
 if page == "案件审查概览":
     case_page()
