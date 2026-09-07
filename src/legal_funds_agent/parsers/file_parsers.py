@@ -4,6 +4,7 @@ import csv
 import io
 import re
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
@@ -39,12 +40,19 @@ def extract_document_text(data: bytes, *, filename: str) -> str:
         reader = PdfReader(io.BytesIO(data))
         text = "\n".join(page.extract_text() or "" for page in reader.pages)
         if not text.replace("\x00", "").strip():
-            # Scanned PDF without text layer: automatically fallback to local OCR
-            from legal_funds_agent.parsers.ocr_service import extract_text_from_scanned_pdf
-            text = extract_text_from_scanned_pdf(data)
+            # Scanned PDF support is experimental and depends on optional OCR
+            # packages; surface that boundary instead of hiding the fallback.
+            try:
+                from legal_funds_agent.parsers.ocr_service import extract_text_from_scanned_pdf
+                text = extract_text_from_scanned_pdf(data)
+            except (ImportError, RuntimeError) as exc:
+                raise ValueError("扫描型 PDF 属于实验性 OCR 能力，请安装可选 OCR 依赖或上传 DOCX/文本型 PDF") from exc
     elif suffix in IMAGE_EXTENSIONS:
-        from legal_funds_agent.parsers.ocr_service import extract_text_from_image
-        text = extract_text_from_image(data)
+        try:
+            from legal_funds_agent.parsers.ocr_service import extract_text_from_image
+            text = extract_text_from_image(data)
+        except (ImportError, RuntimeError) as exc:
+            raise ValueError("图片文字识别属于实验性 OCR 能力，请安装可选 OCR 依赖或上传 DOCX") from exc
     else:
         raise ValueError(f"不支持的文书格式: {suffix or '无扩展名'}")
     text = text.replace("\x00", "").strip()
@@ -62,8 +70,11 @@ def extract_transactions_csv(data: bytes, *, filename: str) -> str:
             raise ValueError("CSV文件为空")
         return text
     if suffix in IMAGE_EXTENSIONS:
-        from legal_funds_agent.parsers.ocr_service import extract_text_from_image, parse_screenshot_transaction
-        ocr_text = extract_text_from_image(data)
+        try:
+            from legal_funds_agent.parsers.ocr_service import extract_text_from_image, parse_screenshot_transaction
+            ocr_text = extract_text_from_image(data)
+        except (ImportError, RuntimeError) as exc:
+            raise ValueError("转账截图识别属于实验性 OCR 能力，请安装可选 OCR 依赖或上传 CSV/XLSX") from exc
         parsed = parse_screenshot_transaction(ocr_text)
         if not parsed:
             raise ValueError("未能从转账截图中识别出有效交易要素（金额/收款人）")
@@ -214,10 +225,11 @@ def _parse_datetime(value: Any) -> datetime | None:
     return None
 
 
-def _number(value: Any) -> float | None:
+def _number(value: Any) -> Decimal | None:
+    """Parse money without entering binary floating-point arithmetic."""
     try:
-        return float(str(value).replace(",", "").strip())
-    except (TypeError, ValueError):
+        return Decimal(str(value).replace(",", "").strip()).quantize(Decimal("0.01"))
+    except (InvalidOperation, TypeError, ValueError):
         return None
 
 

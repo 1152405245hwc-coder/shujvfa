@@ -15,6 +15,7 @@ from legal_funds_agent.services.case_report_service import (
     build_case_master_report,
     case_report_to_html,
 )
+from legal_funds_agent.services.evidence_conflict_service import build_evidence_conflict_matrix
 from legal_funds_agent.services.transaction_analysis import (
     identify_refund_transactions,
     unique_transactions,
@@ -131,10 +132,12 @@ class GoldCase001Test(unittest.TestCase):
         candidate_ids = [c.transaction_id for c in result.candidates]
         decision, events = confirm_transactions(result, candidate_ids, reviewer="检务复核官_王某")
 
-        self.assertEqual(decision.status, ReviewStatus.FULLY_CORROBORATED)
-        self.assertEqual(decision.covered_amount, Decimal("7368000.00"))
-        self.assertEqual(decision.uncovered_amount, Decimal("0.00"))
-        self.assertEqual(len(decision.included_transaction_ids), 18)
+        self.assertEqual(decision.status, ReviewStatus.PENDING_REVIEW)
+        self.assertEqual(decision.covered_amount, Decimal("6118000.00"))
+        self.assertEqual(decision.uncovered_amount, Decimal("1250000.00"))
+        self.assertEqual(decision.disputed_amount, Decimal("1250000.00"))
+        self.assertEqual(len(decision.included_transaction_ids), 15)
+        self.assertEqual(len(decision.disputed_transaction_ids), 3)
 
         # 5. Master Case Report
         master_rep = build_case_master_report(
@@ -148,13 +151,51 @@ class GoldCase001Test(unittest.TestCase):
         self.assertEqual(master_rep["summary"]["total_claimed_amount"], 7368000.0)
         self.assertEqual(master_rep["summary"]["total_refund_amount"], 1326000.0)
         self.assertEqual(master_rep["summary"]["net_claimed_amount"], 6042000.0)
-        self.assertEqual(master_rep["summary"]["total_covered_amount"], 7368000.0)
+        self.assertEqual(master_rep["summary"]["total_covered_amount"], Decimal("6118000.00"))
 
         html_rep = case_report_to_html(master_rep)
-        self.assertIn("涉案资金流向与事实对账审查认定书", html_rep)
+        self.assertIn("全案资金证据核验底稿", html_rep)
         self.assertIn("7,368,000.00", html_rep)
         self.assertIn("1,326,000.00", html_rep)
         self.assertIn("6,042,000.00", html_rep)
+
+    def test_gold_case_001_batch_confirmation_keeps_blocking_candidates_disputed(self):
+        pkg = GOLD_PKG / "visible"
+        result = run_case_inputs(
+            indictment_text=extract_document_text((pkg / "documents/01_起诉书.docx").read_bytes(), filename="01_起诉书.docx"),
+            statement_text=extract_document_text((pkg / "documents/05_被害人陈述.docx").read_bytes(), filename="05_被害人陈述.docx"),
+            csv_text=extract_transactions_csv((pkg / "bank/02_银行流水账单.xlsx").read_bytes(), filename="02_银行流水账单.xlsx"),
+            case_id="GOLD_CASE_001",
+            task_id="TASK-GOLD-BLOCKING",
+            allow_multiple_claims=True,
+        )
+        result.claim = confirm_claim_extraction(result.claim)
+        decision, _ = confirm_transactions(
+            result,
+            [candidate.transaction_id for candidate in result.candidates],
+            reviewer="reviewer",
+        )
+        self.assertEqual(len(decision.included_transaction_ids), 15)
+        self.assertEqual(len(decision.disputed_transaction_ids), 3)
+
+    def test_gold_case_001_conflict_matrix_uses_registered_materials(self):
+        pkg = GOLD_PKG / "visible"
+        documents = [
+            {"filename": path.name, "text": extract_document_text(path.read_bytes(), filename=path.name)}
+            for path in sorted((pkg / "documents").glob("0[34]_*.docx"))
+        ]
+        result = run_case_inputs(
+            indictment_text=extract_document_text((pkg / "documents/01_起诉书.docx").read_bytes(), filename="01_起诉书.docx"),
+            statement_text=extract_document_text((pkg / "documents/05_被害人陈述.docx").read_bytes(), filename="05_被害人陈述.docx"),
+            csv_text=extract_transactions_csv((pkg / "bank/02_银行流水账单.xlsx").read_bytes(), filename="02_银行流水账单.xlsx"),
+            case_id="GOLD_CASE_001",
+            task_id="TASK-GOLD-CONFLICTS",
+            allow_multiple_claims=True,
+        )
+        matrix = build_evidence_conflict_matrix(result.transactions, documents)
+        self.assertEqual([item["id"] for item in matrix], ["CONFLICT-01", "CONFLICT-02", "CONFLICT-03", "CONFLICT-04"])
+        self.assertIn("1,250,000.00", matrix[0]["materials"][2]["finding"])
+        self.assertIn("1,268,000.00", matrix[1]["materials"][0]["finding"])
 
     def test_deepseek_provider_markdown_cleanup(self):
         md_content = "```json\n{\"claims\": [{\"victim_name\": \"张三\", \"claimed_amount\": \"1000\"}]}\n```"

@@ -1,1 +1,12 @@
 2026-09-04 16:05:44.056 Uvicorn server started on :::8501
+2026-09-04 16:46:48.691 Uncaught app execution
+Traceback (most recent call last):
+  File "C:\Users\youxi\Documents\shujvfa\.venv\Lib\site-packages\streamlit\runtime\scriptrunner\exec_code.py", line 136, in exec_func_with_error_handling
+    result = func()
+             ^^^^^^
+  File "C:\Users\youxi\Documents\shujvfa\.venv\Lib\site-packages\streamlit\runtime\scriptrunner\script_runner.py", line 837, in code_to_exec
+    exec(code, module.__dict__)  # noqa: S102
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\youxi\Documents\shujvfa\ui\streamlit_app.py", line 30, in <module>
+    from legal_funds_agent.services.case_report_service import case_report_to_json
+ImportError: cannot import name 'case_report_to_json' from 'legal_funds_agent.services.case_report_service' (C:\Users\youxi\Documents\shujvfa\src\legal_funds_agent\services\case_report_service.py)

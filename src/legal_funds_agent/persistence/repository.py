@@ -37,6 +37,17 @@ class Repository:
         payload = claim.model_dump(mode="json")
         payload["victim_account"] = _mask_account(claim.victim_account)
         payload["alleged_recipient_account"] = _mask_account(claim.alleged_recipient_account)
+        existing = self.connection.execute(
+            "SELECT payload_json FROM claims WHERE id = ?", (claim.id,)
+        ).fetchone()
+        if existing:
+            # Older checkpoints did not persist the optional locator payload.
+            # A locator enrichment is safe to replay; substantive claim fields
+            # remain immutable and still raise below.
+            stored_payload = json.loads(existing["payload_json"])
+            identity_fields = set(payload) - {"source_locator_ids", "source_locators"}
+            if all(stored_payload.get(field) == payload.get(field) for field in identity_fields):
+                return
         self._insert_immutable(
             "claims", claim.id, ("id", "case_id", "payload_json"),
             (claim.id, claim.case_id, json.dumps(payload, ensure_ascii=False)),
@@ -54,10 +65,20 @@ class Repository:
                 # it for the same case and namespace collisions from another case.
                 storage_id = tx.id
                 existing = self.connection.execute(
-                    "SELECT case_id FROM transactions WHERE id = ?", (storage_id,)
+                    "SELECT case_id, payload_json FROM transactions WHERE id = ?", (storage_id,)
                 ).fetchone()
                 if existing and existing["case_id"] != tx.case_id:
                     storage_id = f"{tx.case_id}::{tx.id}"
+                elif existing:
+                    # Re-importing the same evidence through CSV/XLSX can
+                    # legitimately change only the source row or locator ID.
+                    # Those fields identify where to look, not which money
+                    # event occurred; keep the immutable stored event while
+                    # allowing the signature flow to proceed idempotently.
+                    stored_payload = json.loads(existing["payload_json"])
+                    identity_fields = set(payload) - {"source_row", "source_evidence_id"}
+                    if all(stored_payload.get(field) == payload.get(field) for field in identity_fields):
+                        continue
                 self._insert_immutable(
                     "transactions", storage_id, ("id", "case_id", "fingerprint", "payload_json"),
                     (storage_id, tx.case_id, tx.dedup_fingerprint, json.dumps(payload, ensure_ascii=False)),

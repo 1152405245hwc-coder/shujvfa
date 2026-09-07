@@ -2,14 +2,14 @@
 
 面向诈骗类刑事案件的涉案资金证据审查与指控金额一致性核验工具。
 
-项目当前状态为 `V0.1 MVP core frozen`。审核请从 [REVIEW.md](REVIEW.md) 开始；项目必读边界和 DeepSeek 使用原则见 [PROJECT_MUST_READ.md](PROJECT_MUST_READ.md)。
+项目当前状态为 `V0.2 Showcase Candidate`；`V0.1 Core` 已冻结。审核请从 [REVIEW.md](REVIEW.md) 开始；项目必读边界和 DeepSeek 使用原则见 [PROJECT_MUST_READ.md](PROJECT_MUST_READ.md)。
 
 ## 当前可运行能力
 
 当前已实现离线 Vertical Slice 核心：Mock Claim 提取及显式人工确认、CSV 流水解析、
 候选匹配、逐笔处置及理由、确定性金额校验、版本化决定、不可静默覆盖的 SQLite 保存、
 来源定位、三种报告和最小审计日志。语义提取层可切换 Mock、OpenAI 或 DeepSeek，
-业务流程和确定性金额核心不依赖具体 Provider。V0.1 明确只支持单 Claim。
+业务流程和确定性金额核心不依赖具体 Provider。多 Claim 与证据冲突矩阵当前为实验性展示能力，最终复核仍需逐项人工确认。
 Streamlit 工作台当前仅向操作人员开放本地 Mock 与 DeepSeek 两种模型入口；OpenAI 适配保留在代码层，
 不作为 UI 运行选项。
 
@@ -28,7 +28,7 @@ $env:PYTHONPATH='src'
 ```
 
 个人启动和自测也可以直接执行根目录脚本：[START_HERE.md](START_HERE.md)、`start_ui.ps1`、`run_checks.ps1`。
-上传材料支持 TXT/DOCX/文本型PDF，银行流水支持 CSV/XLSX/XLSM；扫描型PDF当前会明确提示需要 OCR。
+正式支持 DOCX、XLSX/XLSM、CSV；TXT 和文本型 PDF 作为辅助输入。扫描型 PDF、图片和 OCR 属于实验性能力，缺少可选依赖时会明确提示，不影响正式主链。
 
 正式测试命令为：
 
@@ -91,7 +91,7 @@ $env:PYTHONPATH='src'
 均为5/5案例、45/45检查通过。它独立于公开 Gold Cases，但仍是项目内部构造的虚构材料，
 不能表述为外部专家盲测。
 
-## V0.1 文档
+## V0.2 文档
 
 - [产品范围与责任边界](docs/product/v0.1_scope.md)
 - [资金证据审查协议](docs/legal/review_protocol.md)
@@ -106,5 +106,5 @@ $env:PYTHONPATH='src'
 系统输出是可复核的资金证据审查意见，不是定罪、量刑或犯罪金额的最终司法认定。
 大语言模型只参与材料语义提取；金额计算、去重、状态汇总和一致性校验由确定性代码完成。
 
-> 仅可使用完全虚构材料进行演示。V0.1 不支持真实案件、多 Claim、PDF 或 OCR；
-> DeepSeek 已完成五个公开虚构 Gold Cases 的真实 API 回归，默认演示仍始终使用 Mock。
+> 仅可使用完全虚构材料进行演示。系统不替代司法机关对事实、定罪、量刑或犯罪金额的最终认定；
+> DeepSeek 只负责语义提取和说明草稿，金额、去重、风险阻断、状态和签署留痕由确定性代码完成。

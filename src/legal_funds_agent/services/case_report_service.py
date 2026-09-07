@@ -150,10 +150,12 @@ def build_case_master_report(
     summary: CaseReviewSummary | None = None,
     audit_events: list[Any] | None = None,
     claim_locators: list[SourceLocator] | None = None,
+    evidence_conflicts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Build comprehensive, multi-claim master audit report with SHA-256 digital fingerprint."""
+    """Build a multi-claim funds review workbook with an integrity fingerprint."""
     if summary is None:
         summary = summarize_case_reviews(claims, list(decisions_by_claim.values()))
+    evidence_conflicts = evidence_conflicts or []
 
     # Calculate SHA-256 tamper-proof fingerprint
     fingerprint_source = {
@@ -161,6 +163,7 @@ def build_case_master_report(
         "claims": [c.model_dump(mode="json") for c in claims],
         "decisions": [d.model_dump(mode="json") for d in decisions_by_claim.values()],
         "included_tids": sorted(list({tid for d in decisions_by_claim.values() for tid in d.included_transaction_ids})),
+        "evidence_conflicts": evidence_conflicts,
     }
     raw_bytes = json.dumps(fingerprint_source, sort_keys=True, ensure_ascii=False).encode("utf-8")
     sha256_hash = hashlib.sha256(raw_bytes).hexdigest()
@@ -176,9 +179,9 @@ def build_case_master_report(
             "alleged_recipient_name": c.alleged_recipient_name or "待确认",
             "alleged_recipient_account": _mask_account(c.alleged_recipient_account),
             "time_start": str(c.time_start),
-            "claimed_amount": float(c.claimed_amount),
-            "covered_amount": float(d.covered_amount) if d else 0.0,
-            "uncovered_amount": float(d.uncovered_amount) if d else float(c.claimed_amount),
+            "claimed_amount": c.claimed_amount,
+            "covered_amount": d.covered_amount if d else Decimal("0.00"),
+            "uncovered_amount": d.uncovered_amount if d else c.claimed_amount,
             "status": d.status.value if d else "PENDING_REVIEW",
             "version": d.version if d else 1,
         })
@@ -207,7 +210,7 @@ def build_case_master_report(
                 "payee_account": _mask_account(tx.payee_account),
                 "payee_account_id": tx.payee_account_id,
                 "source_account_id": tx.source_account_id,
-                "amount": float(tx.amount),
+                "amount": tx.amount,
                 "disposition": action.disposition,
                 "reason_code": action.reason_code,
                 "review_note": action.note or "",
@@ -254,7 +257,7 @@ def build_case_master_report(
             "payer_account": _mask_account(tx.payer_account),
             "payee_name": tx.payee_name or "-",
             "payee_account": _mask_account(tx.payee_account),
-            "amount": float(tx.amount),
+            "amount": tx.amount,
             "remark": tx.remark or "疑似向被害人账户转回",
             "legal_nature": "疑似返还流水，待人工核验",
         }
@@ -268,12 +271,12 @@ def build_case_master_report(
         "disclaimer": DISCLAIMER,
         "data_integrity_sha256": sha256_hash,
         "summary": {
-            "total_claimed_amount": float(summary.total_claimed_amount),
-            "total_refund_amount": float(total_refund_amount),
-            "net_claimed_amount": float(net_claimed_amount),
-            "total_covered_amount": float(summary.total_covered_amount),
-            "total_uncovered_amount": float(summary.total_uncovered_amount),
-            "total_disputed_amount": float(summary.total_disputed_amount),
+            "total_claimed_amount": summary.total_claimed_amount,
+            "total_refund_amount": total_refund_amount,
+            "net_claimed_amount": net_claimed_amount,
+            "total_covered_amount": summary.total_covered_amount,
+            "total_uncovered_amount": summary.total_uncovered_amount,
+            "total_disputed_amount": summary.total_disputed_amount,
             "claims_count": summary.claim_count,
             "reviewed_transactions_count": len(all_actions),
             "has_cross_claim_duplicate": bool(summary.cross_claim_errors),
@@ -283,13 +286,25 @@ def build_case_master_report(
         "refund_transactions": refund_records,
         "fund_flow_topology": mermaid_code,
         "investigation_checklist": checklist,
+        "evidence_conflicts": evidence_conflicts,
     }
 
 
+def case_report_to_json(report: dict[str, Any]) -> str:
+    """Serialize the master report with money as exact two-decimal strings."""
+    def encode(value: Any) -> str:
+        if isinstance(value, Decimal):
+            return f"{value.quantize(Decimal('0.01')):.2f}"
+        raise TypeError(f"Unsupported report value: {type(value).__name__}")
+
+    return json.dumps(report, ensure_ascii=False, indent=2, default=encode)
+
+
 def case_report_to_html(report: dict[str, Any]) -> str:
-    """Render court-grade official judicial audit master report in HTML with embedded Mermaid and verification seal."""
+    """Render a printable review workbook with embedded Mermaid and integrity seal."""
     summary = report["summary"]
     checklist = report.get("investigation_checklist", [])
+    evidence_conflicts = report.get("evidence_conflicts", [])
 
     status_map = {
         "FULLY_CORROBORATED": "资金证据完整覆盖",
@@ -357,11 +372,31 @@ def case_report_to_html(report: dict[str, Any]) -> str:
         for c in checklist
     )
 
+    conflict_sections = "".join(
+        f"<section class='conflict-card'><div class='conflict-title'>{html.escape(str(conflict.get('id', '')))} · "
+        f"{html.escape(str(conflict.get('title', '')))} <span class='badge badge-{html.escape(str(conflict.get('priority', '中')))}'>"
+        f"{html.escape(str(conflict.get('priority', '中')))}</span></div>"
+        f"<table><thead><tr><th>材料</th><th>核验摘录</th></tr></thead><tbody>"
+        + "".join(
+            f"<tr><td>{html.escape(str(material.get('source', '')))}</td><td>{html.escape(str(material.get('finding', '')))}</td></tr>"
+            for material in conflict.get("materials", [])
+        )
+        + f"</tbody></table><p><strong>当前判断：</strong>{html.escape(str(conflict.get('conclusion', '')))}</p>"
+        f"<p><strong>下一步：</strong>{html.escape(str(conflict.get('next_action', '')))}</p></section>"
+        for conflict in evidence_conflicts
+    )
+    conflict_section = (
+        "<h2>三、证据冲突与争议焦点</h2>"
+        "<p class='section-note'>下列内容用于提示材料之间的差异和回查方向，不替代人工对事实和法律问题的判断。</p>"
+        f"{conflict_sections}"
+        if evidence_conflicts else ""
+    )
+
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>全案涉案资金证据审查认定底稿 - {html.escape(report['case_id'])}</title>
+<title>全案资金证据核验底稿 - {html.escape(report['case_id'])}</title>
 <style>
 body {{ font: 14px/1.6 "PingFang SC", "Microsoft YaHei", -apple-system, sans-serif; margin: 30px auto; max-width: 1100px; color: #1e293b; background: #ffffff; padding: 0 20px; }}
 .judicial-header {{ margin-bottom: 25px; }}
@@ -390,6 +425,9 @@ th {{ background: #f1f5f9; color: #334155; font-weight: 600; }}
 .badge-紧急 {{ background: #fca5a5; color: #7f1d1d; }}
 .badge-正常 {{ background: #dcfce7; color: #15803d; }}
 .footer-seal {{ margin-top: 40px; padding-top: 20px; border-top: 2px dashed #cbd5e1; display: flex; justify-content: space-between; align-items: flex-end; }}
+.section-note {{ color:#64748b; font-size:13px; }}
+.conflict-card {{ border:1px solid #cbd5e1; border-left:4px solid #d97706; border-radius:6px; padding:14px 16px; margin:14px 0 20px; background:#fffdf7; }}
+.conflict-title {{ font-size:15px; font-weight:700; color:#334155; margin-bottom:10px; }}
 @media print {{
   .no-print {{ display: none !important; }}
   body {{ margin: 0; padding: 5mm; font-size: 12px; }}
@@ -408,25 +446,25 @@ mermaid.initialize({{ startOnLoad: true }});
 
 <div class="no-print" style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;">
   <div>
-    <strong style="color:#0f172a;font-size:14px;">【司法卷宗】资金证据审查认定书生成完毕</strong>
-    <span style="color:#64748b;font-size:12px;margin-left:12px;">符合《刑事诉讼法》关于电子数据审查鉴真规范，包含 SHA-256 防伪指纹</span>
+    <strong style="color:#0f172a;font-size:14px;">资金证据核验底稿已生成</strong>
+    <span style="color:#64748b;font-size:12px;margin-left:12px;">包含审查结果数据完整性 SHA-256，可供复核备查</span>
   </div>
-  <button onclick="window.print()" style="background:#1e40af;color:#ffffff;border:none;border-radius:4px;padding:8px 18px;font-weight:bold;cursor:pointer;font-size:13px;">一键打印 / 另存为裁判文书 (PDF)</button>
+  <button onclick="window.print()" style="background:#1e40af;color:#ffffff;border:none;border-radius:4px;padding:8px 18px;font-weight:bold;cursor:pointer;font-size:13px;">打印 / 保存为 PDF</button>
 </div>
 
 <div class="judicial-header">
-  <div style="font-size:24px;font-family:'SimSun', 'Songti SC', serif;font-weight:bold;color:#b91c1c;text-align:center;letter-spacing:2px;margin-bottom:6px;">涉案资金流向与事实对账审查认定书</div>
-  <div class="subtitle" style="text-align:center;color:#64748b;font-size:13px;margin-bottom:10px;">【全案资金证据穿透核验 · 司法审查认定工作底稿】</div>
+  <div style="font-size:24px;font-family:'SimSun', 'Songti SC', serif;font-weight:bold;color:#1e3a5f;text-align:center;letter-spacing:2px;margin-bottom:6px;">全案资金证据核验底稿</div>
+  <div class="subtitle" style="text-align:center;color:#64748b;font-size:13px;margin-bottom:10px;">【资金流向与材料对应核验 · 人工复核工作底稿】</div>
   <div style="height:3px;background:#b91c1c;margin-bottom:2px;"></div>
   <div style="height:1px;background:#b91c1c;margin-bottom:20px;"></div>
 </div>
 
 <div class="hash-bar">
-  <strong>【电子数据鉴真防伪指纹 (SHA-256)】：</strong>{html.escape(report['data_integrity_sha256'])}
+  <strong>【审查结果数据完整性 (SHA-256)】：</strong>{html.escape(report['data_integrity_sha256'])}
 </div>
 
 <div class="disclaimer">
-  <strong>司法效力指引：</strong>{html.escape(report['disclaimer'])}
+  <strong>使用边界：</strong>{html.escape(report['disclaimer'])}
 </div>
 
 <div class="meta-box">
@@ -482,7 +520,9 @@ mermaid.initialize({{ startOnLoad: true }});
   <pre class="mermaid">{html.escape(report['fund_flow_topology'])}</pre>
 </div>
 
-<h2>三、 疑似向被害人账户转回流水明细表 (共 {len(refund_list)} 笔 · 合计 ¥{summary.get('total_refund_amount', 0.0):,.2f})</h2>
+{conflict_section}
+
+<h2>{'四' if evidence_conflicts else '三'}、疑似向被害人账户转回流水明细表 (共 {len(refund_list)} 笔 · 合计 ¥{summary.get('total_refund_amount', Decimal('0.00')):,.2f})</h2>
 <table>
   <thead>
     <tr>
@@ -493,7 +533,7 @@ mermaid.initialize({{ startOnLoad: true }});
       <th>接收方 (被害人账户)</th>
       <th>返还金额</th>
       <th>流水摘要/备注</th>
-      <th>法定认定性质</th>
+       <th>当前待核验性质</th>
     </tr>
   </thead>
   <tbody>
@@ -501,7 +541,7 @@ mermaid.initialize({{ startOnLoad: true }});
   </tbody>
 </table>
 
-<h2>四、 涉案付款流水逐笔穿透复核记录 (共 {len(report['reviewed_transactions'])} 笔)</h2>
+<h2>{'五' if evidence_conflicts else '四'}、涉案付款流水逐笔复核记录 (共 {len(report['reviewed_transactions'])} 笔)</h2>
 <table>
   <thead>
     <tr>
@@ -514,7 +554,7 @@ mermaid.initialize({{ startOnLoad: true }});
   </tbody>
 </table>
 
-<h2>五、 补充调查取证提纲与退查建议清单</h2>
+<h2>{'六' if evidence_conflicts else '五'}、补充调查回查清单</h2>
 <table>
   <thead>
     <tr>
@@ -533,7 +573,7 @@ mermaid.initialize({{ startOnLoad: true }});
   </div>
   <div style="text-align: right; color: #64748b; font-size: 11px;">
     由 资金链证审系统 自动化辅助生成<br/>
-    防伪数据指纹：{html.escape(report['data_integrity_sha256'][:16])}...
+     数据完整性指纹：{html.escape(report['data_integrity_sha256'][:16])}...
   </div>
 </div>
 

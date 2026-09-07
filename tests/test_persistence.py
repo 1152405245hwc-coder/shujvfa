@@ -102,6 +102,7 @@ class PersistenceTest(unittest.TestCase):
             transactions = list(result.transactions.values())
             repository.save_transactions(transactions)
             repository.save_transactions(transactions)
+            repository.save_transactions([transactions[0].model_copy(update={"source_row": transactions[0].source_row + 4})])
             changed = transactions[0].model_copy(update={"remark": "不同内容"})
             with self.assertRaisesRegex(ValueError, "immutable transaction"):
                 repository.save_transactions([changed])

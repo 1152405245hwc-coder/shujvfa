@@ -65,7 +65,8 @@ def _hash_text(value: str) -> str:
 def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
                     case_id: str = "CASE-0001", task_id: str = "TASK-0001",
                     provider: LLMProvider | None = None,
-                    allow_multiple_claims: bool = False) -> WorkflowResult:
+                    allow_multiple_claims: bool = False,
+                    transaction_evidence_id: str = "EVI-BANK-CSV") -> WorkflowResult:
     logs: list[AuditEvent] = []
     provider = provider or MockProvider()
     step, tool, started, step_input = "claim_extraction", f"{provider.name}_structured", datetime.now(timezone.utc), indictment_text
@@ -96,7 +97,7 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
         ))
 
         step, tool, started, step_input = "transaction_parser", "csv_parser_v0.1", datetime.now(timezone.utc), csv_text
-        transactions = parse_transactions(csv_text, case_id=case_id, evidence_id="EVI-BANK-CSV")
+        transactions = parse_transactions(csv_text, case_id=case_id, evidence_id=transaction_evidence_id)
         tx_index = {tx.id: tx for tx in transactions}
         duplicate_groups = find_duplicate_transactions(transactions)
         logs.append(completed_event(
@@ -178,8 +179,18 @@ def confirm_transactions(result: WorkflowResult, transaction_ids: list[str], *, 
     actions = [
         TransactionReviewAction(
             transaction_id=candidate.transaction_id,
-            disposition="INCLUDED" if candidate.transaction_id in included else "EXCLUDED",
-            reason_code="MATCHED_CLAIM" if candidate.transaction_id in included else "UNRELATED_TRANSACTION",
+            # A batch action may accept ordinary candidates, but it must never
+            # silently override a deterministic blocking conflict.
+            disposition=(
+                "DISPUTED"
+                if candidate.blocking_conflict
+                else "INCLUDED" if candidate.transaction_id in included else "EXCLUDED"
+            ),
+            reason_code=(
+                "THIRD_PARTY_RECIPIENT"
+                if candidate.blocking_conflict
+                else "MATCHED_CLAIM" if candidate.transaction_id in included else "UNRELATED_TRANSACTION"
+            ),
         )
         for candidate in candidates
     ]
@@ -201,6 +212,17 @@ def review_transactions(result: WorkflowResult, actions: list[TransactionReviewA
     if len(reviewed_ids) != len(actions) or candidate_ids != reviewed_ids:
         raise ValueError("PENDING_CANDIDATE_REVIEW_REQUIRED")
     dispositions = {action.transaction_id: action.disposition for action in actions}
+    blocking_ids = {
+        candidate.transaction_id
+        for candidate in candidates
+        if candidate.blocking_conflict
+    }
+    if blocking_ids & {
+        transaction_id
+        for transaction_id, disposition in dispositions.items()
+        if disposition == "INCLUDED"
+    }:
+        raise ValueError("BLOCKING_CANDIDATE_REQUIRES_DISPUTED")
     included = [key for key, value in dispositions.items() if value == "INCLUDED"]
     excluded = [key for key, value in dispositions.items() if value == "EXCLUDED"]
     disputed = [key for key, value in dispositions.items() if value == "DISPUTED"]
