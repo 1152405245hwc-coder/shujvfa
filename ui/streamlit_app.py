@@ -13,8 +13,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+UI_DIR = Path(__file__).resolve().parent
+for _p in (str(SRC), str(UI_DIR)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import streamlit as st
 
@@ -52,103 +54,811 @@ from legal_funds_agent.workflow.vertical_slice import (
 st.set_page_config(page_title="资金链证审", page_icon=None, layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
-:root { --ink:#15171a; --muted:#667085; --line:#d9dde3; --green:#276749; --amber:#9a6700; --red:#a23b32; --blue:#18324a; --paper:#f7f7f5; --gold:#b28a48; }
-.stApp { background:var(--paper); color:var(--ink); }
-html, body, [class*="css"] { font-family:Inter, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; font-variant-numeric:tabular-nums; }
-section.main > div { max-width:none; padding:2rem clamp(1.25rem, 4vw, 4.5rem) 4rem; }
-[data-testid="stAppDeployButton"], [data-testid="stMainMenuButton"] { display:none !important; }
+:root {
+    --paper: #f7f7f5;
+    --surface: #ffffff;
+    --ink: #15171a;
+    --muted: #667085;
+    --line: #d9dde3;
+    --navy: #18324a;
+    --navy-hover: #10283b;
+    --gold: #b28a48;
+    --focus-ring: #315c83;
+    --sidebar-bg: #fafaf8;
+    --status-ok: #276749;
+    --status-ok-bg: #eaf3ee;
+    --status-partial: #9a6700;
+    --status-partial-bg: #fdf6e6;
+    --status-conflict: #a23b32;
+    --status-conflict-bg: #fbeeed;
+    --status-insufficient: #667085;
+    --status-insufficient-bg: #f0f2f5;
+    --status-excluded: #475467;
+    --status-excluded-bg: #eceef1;
+}
+
+/* Global resets & Typography */
+.stApp {
+    background: var(--paper);
+    color: var(--ink);
+}
+html, body, [class*="css"] {
+    font-family: Inter, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+section.main > div {
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 2rem clamp(1.25rem, 4vw, 4.5rem) 4rem;
+}
+
+/* Hide default streamlit clutter */
+[data-testid="stAppDeployButton"], [data-testid="stMainMenuButton"] {
+    display: none !important;
+}
 [data-testid="stSidebarCollapseButton"], [data-testid="stSidebarCollapseButton"] button,
 [data-testid="stSidebarCollapsedControl"], [data-testid="stSidebarCollapsedControl"] button {
-    visibility:visible !important; opacity:1 !important;
+    visibility: visible !important;
+    opacity: 1 !important;
 }
-.stApp [data-testid="stSidebar"] { background:#fafaf8; border-right:1px solid var(--line); }
-[data-testid="stSidebar"] > div:first-child { padding:1.25rem .9rem; }
-[data-testid="stSidebar"] * { color:var(--ink); }
-[data-testid="stSidebar"] [data-testid="stCaptionContainer"] { color:var(--muted); }
-[data-testid="stSidebar"] .stRadio > label { color:var(--ink); font-weight:650; }
-[data-testid="stSidebar"] .stRadio div[role="radiogroup"] { gap:2px; }
-[data-testid="stSidebar"] .stRadio label { padding:8px 10px; border-left:2px solid transparent; border-radius:0; }
-[data-testid="stSidebar"] .stRadio label:has(input:checked) { background:#eef1f3; border-left-color:var(--blue); }
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3 { color:var(--blue); letter-spacing:.02em; }
-[data-testid="stSidebar"] [data-testid="stMetric"] { background:transparent; border:0; border-top:1px solid var(--line); border-radius:0; box-shadow:none; padding:10px 0; }
-.workspace-title { color:var(--blue); font-size:28px; line-height:1.2; font-weight:760; letter-spacing:0; margin:0 0 5px; }
-.workspace-subtitle { color:var(--muted); font-size:14px; margin:0 0 24px; }
-.case-header { background:transparent; border:0; border-bottom:1px solid var(--line); border-radius:0; padding:10px 0 18px; margin:0 0 24px; }
-.case-header-top { color:var(--muted); font-size:12px; font-weight:650; letter-spacing:.03em; margin-bottom:8px; }
-.case-header-title { color:var(--ink); font-size:28px; line-height:1.2; font-weight:760; margin:0 0 5px; }
-.case-header-subtitle { color:#52636d; font-size:14px; margin:0 0 15px; }
-.case-header-meta { display:flex; flex-wrap:wrap; gap:8px 22px; color:var(--muted); font-size:12px; padding-top:12px; border-top:1px solid #edf0f2; }
-.case-header-meta strong { color:#29404d; font-weight:700; }
-.case-header-meta .current { color:#1f5f8b; }
-.workspace-banner { display:none; }
-.case-masthead { border-bottom:1px solid var(--line); padding:8px 0 22px; margin:0 auto 24px; max-width:1360px; }
-.masthead-top { display:flex; justify-content:space-between; color:var(--muted); font-size:12px; letter-spacing:.04em; text-transform:uppercase; }
-.masthead-status { color:var(--amber); text-transform:none; }
-.case-masthead h1 { font-size:32px; line-height:1.15; margin:20px 0 4px; color:var(--ink); letter-spacing:-.02em; }
-.masthead-subtitle { font-size:17px; margin:0 0 12px; color:var(--blue); }
-.masthead-meta { color:var(--muted); font-size:13px; }
-.masthead-meta span { color:var(--gold); padding:0 6px; }
-.stat-strip { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); border-top:1px solid var(--line); border-bottom:1px solid var(--line); margin:18px 0 30px; }
-.stat-item { min-height:104px; padding:15px 18px 12px 0; border-right:1px solid var(--line); }
-.stat-item:not(:first-child) { padding-left:18px; }
-.stat-item:last-child { border-right:0; }
-.stat-label,.section-number,.source-kicker,.issue-kicker,.risk-kicker { font-size:11px; letter-spacing:.08em; color:var(--muted); text-transform:uppercase; }
-.stat-value { color:var(--blue); font-size:28px; line-height:1.15; font-weight:650; margin:9px 0 6px; }
-.stat-note { color:var(--muted); font-size:12px; }
-.section-heading { display:flex; align-items:baseline; gap:12px; border-bottom:1px solid var(--line); padding:9px 0 10px; margin:24px 0 15px; }
-.section-heading strong { color:var(--ink); font-size:16px; }
-.section-heading > span:last-child { color:var(--muted); font-size:12px; margin-left:auto; }
-.status-label { display:inline-block; font-size:12px; font-weight:650; }
-.status-label.ok { color:var(--green); }.status-label.partial { color:var(--amber); }.status-label.danger { color:var(--red); }.status-label.muted { color:var(--muted); }
-.source-quote { border-left:3px solid var(--gold); margin:14px 0; padding:12px 16px; background:#fbfbf9; }
-.source-quote blockquote { font-family:"Songti SC", "SimSun", "Noto Serif SC", serif; font-size:16px; line-height:1.75; margin:8px 0; color:#282b2f; }
-.source-quote figcaption { color:var(--muted); font-size:11px; }
-.review-issue,.risk-panel,.review-summary { border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:16px 0; margin:14px 0 22px; }
-.issue-kicker,.risk-kicker { display:flex; justify-content:space-between; }.issue-kicker span,.risk-kicker span { color:var(--amber); text-transform:none; letter-spacing:0; }
-.review-issue h3,.risk-panel h3 { margin:8px 0 14px; color:var(--ink); font-size:18px; }.risk-panel h3 strong { float:right; color:var(--blue); font-size:20px; }
-.issue-materials { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; padding:12px 0; border-top:1px solid #eceef0; border-bottom:1px solid #eceef0; }
-.issue-materials b,.risk-grid small { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }.issue-materials p { margin:6px 0 0; font-family:"Songti SC", "SimSun", serif; line-height:1.55; }
-.issue-conclusion,.issue-next { padding-top:12px; font-size:13px; }.issue-conclusion b,.issue-next b { color:var(--muted); font-size:11px; letter-spacing:.06em; }.issue-conclusion p,.issue-next p { margin:4px 0 0; }.issue-next { color:var(--blue); }
-.risk-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; border-top:1px solid #eceef0; padding-top:12px; }.risk-grid div { font-size:14px; }.risk-reason { color:var(--red); font-size:13px; margin-bottom:0; }
-.review-summary { background:#fff; padding:20px 22px; }.review-summary h2 { margin:8px 0; font-size:24px; }.review-summary p { max-width:800px; color:#475467; line-height:1.65; }
-.evidence-card { border:0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); border-radius:0; background:transparent; padding:16px 0; margin:14px 0 20px; box-shadow:none; }
-.evidence-card h4 { color:#16384a; margin:0 0 13px; font-size:15px; line-height:1.4; }
-.evidence-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px 20px; }
-.evidence-label { color:var(--muted); font-size:12px; display:block; margin-bottom:4px; }
-.evidence-value { color:#1f2f38; font-size:15px; font-weight:650; overflow-wrap:anywhere; }
-.status-badge { display:inline-block; border-radius:3px; padding:3px 6px; font-size:12px; font-weight:650; background:#eef0f2; color:#475467; vertical-align:middle; }
-.status-badge.ok { background:#e8f2ec; color:var(--green); }
-.status-badge.warn { background:#fff3d8; color:var(--amber); }
-.status-badge.danger { background:#f9e6e3; color:var(--red); }
-.section-kicker { color:var(--blue); font-size:11px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; margin:8px 0 7px; }
-.legal-notice { border-left:4px solid var(--amber); background:#fff8ed; color:#684719; padding:11px 13px; font-size:13px; line-height:1.55; margin:16px 0; border-radius:0 5px 5px 0; }
-.status-ok { color:var(--green); font-weight:650; }
-.topology-shell { background:#fff; border:1px solid var(--line); border-radius:7px; padding:12px 16px; margin:10px 0 18px; overflow:auto; }
-.topology-shell pre { margin:0; font-size:12px; line-height:1.35; }
-.priority-high { color:#a33b32; font-weight:750; }
-.priority-low { color:#176b4d; font-weight:650; }
-div[data-testid="stMetric"] { border:0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); border-radius:0; background:transparent; padding:13px 0 11px; box-shadow:none; }
-div[data-testid="stMetricLabel"] { color:var(--muted); }
-div[data-testid="stMetricValue"] { color:var(--blue); }
-div[data-testid="stMetricValue"] p { font-size:18px; line-height:1.25; white-space:nowrap; overflow:visible; text-overflow:clip; margin:0; }
-div[data-testid="stColumn"]:nth-child(4) div[data-testid="stMetric"] { border-top:2px solid var(--gold); }
-div[data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:0; overflow:hidden; background:#fff; }
-div[data-testid="stExpander"] { border:1px solid var(--line); border-radius:0; background:transparent; }
-.stButton>button, .stDownloadButton>button { border-radius:3px; min-height:2.6rem; font-weight:650; }
-.stButton>button[kind="primary"] { background:var(--blue); border-color:var(--blue); }
-.stButton>button[kind="primary"]:hover { background:#10283b; border-color:#10283b; }
-[data-testid="stFileUploader"] { border:1px dashed #9aa6b2; border-radius:0; background:#fff; }
-*:focus-visible { outline:3px solid #315c83 !important; outline-offset:2px; }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
-@media (max-width: 760px) { .evidence-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; } .workspace-title { font-size:24px; } }
-@media (max-width: 760px) { .stat-strip,.issue-materials,.risk-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .stat-item:nth-child(2) { border-right:0; } .stat-item:nth-child(n+3) { border-top:1px solid var(--line); } }
-@media (max-width: 480px) { .evidence-grid { grid-template-columns:1fr; } section.main > div { padding-top:1.2rem; } }
-@media (max-width: 480px) {
-    div[data-testid="stMetricValue"] p { font-size:17px; white-space:nowrap; }
+
+/* Swiss Sidebar: Neutral #fafaf8 with 1px border */
+.stApp [data-testid="stSidebar"] {
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--line);
+    box-shadow: none;
+}
+[data-testid="stSidebar"] > div:first-child {
+    padding: 1.5rem 1.1rem 2.5rem;
+}
+[data-testid="stSidebar"] * {
+    color: var(--ink);
+}
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+    color: var(--muted);
+}
+.sidebar-brand-block {
+    padding: 0 0 16px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 20px;
+}
+.sidebar-brand-badge {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: var(--gold);
+    margin-right: 8px;
+    vertical-align: 2px;
+}
+.sidebar-brand-name {
+    font-size: 16px;
+    font-weight: 750;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+}
+.sidebar-brand-sub {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-top: 4px;
+    padding-left: 16px;
+    font-weight: 600;
+}
+
+/* Sidebar Navigation Radio (pure link style with 2px navy bar) */
+[data-testid="stSidebar"] .stRadio > label {
+    display: none !important;
+}
+[data-testid="stSidebar"] .stRadio div[role="radiogroup"] {
+    gap: 3px;
+}
+[data-testid="stSidebar"] .stRadio label {
+    padding: 10px 14px;
+    border-left: 2px solid transparent;
+    border-radius: 0px !important;
+    font-size: 14px;
+    font-weight: 550;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    transition: background 0.15s ease, border-left-color 0.15s ease;
+    cursor: pointer;
+}
+[data-testid="stSidebar"] .stRadio label:hover {
+    background: #f0f2f4;
+}
+[data-testid="stSidebar"] .stRadio label:has(input:checked) {
+    background: #eef1f5;
+    border-left-color: var(--navy);
+    font-weight: 700;
+    color: var(--navy);
+}
+[data-testid="stSidebar"] .stRadio label > div:first-child {
+    display: none;
+}
+[data-testid="stSidebar"] .stRadio div[data-testid="stMarkdownContainer"] p {
+    margin: 0;
+    font-size: 13.5px;
+    letter-spacing: 0.02em;
+}
+
+/* Swiss Editorial Masthead */
+.case-masthead {
+    border-bottom: 1px solid var(--line);
+    padding: 8px 0 24px;
+    margin: 0 auto 26px;
+    max-width: 1440px;
+}
+.masthead-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+.masthead-case-code {
+    font-family: Inter, monospace;
+    font-weight: 650;
+    color: var(--ink);
+    letter-spacing: 0.08em;
+}
+.masthead-status-badge {
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 0px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+}
+.case-masthead h1 {
+    font-size: 32px;
+    line-height: 1.15;
+    margin: 16px 0 6px;
+    color: var(--ink);
+    font-weight: 750;
+    letter-spacing: -0.02em;
+}
+.masthead-subtitle {
+    font-size: 16px;
+    font-weight: 500;
+    margin: 0 0 12px;
+    color: var(--navy);
+    letter-spacing: 0.01em;
+}
+.masthead-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12.5px;
+    letter-spacing: 0.02em;
+}
+.masthead-meta .meta-dot {
+    color: var(--gold);
+    font-weight: 700;
+    padding: 0 3px;
+}
+
+/* Swiss Stat Strip: Pure 4-column Grid */
+.stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    margin: 18px 0 30px;
+    background: transparent;
+}
+.stat-item {
+    min-height: 106px;
+    padding: 16px 20px 14px 0;
+    border-right: 1px solid var(--line);
+}
+.stat-item:not(:first-child) {
+    padding-left: 20px;
+}
+.stat-item:last-child {
+    border-right: 0;
+}
+.stat-label {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-weight: 600;
+}
+.stat-value {
+    color: var(--ink);
+    font-size: 28px;
+    line-height: 1.15;
+    font-weight: 650;
+    margin: 10px 0 6px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+}
+.stat-note {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+/* Section Headings */
+.section-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    border-bottom: 1px solid var(--line);
+    padding: 12px 0 10px;
+    margin: 26px 0 16px;
+}
+.section-heading .section-kicker {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--gold);
+    font-weight: 700;
+    text-transform: uppercase;
+}
+.section-heading strong {
+    color: var(--ink);
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+.section-heading .heading-sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin-left: auto;
+}
+.section-kicker {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--gold);
+    font-weight: 700;
+    text-transform: uppercase;
+    margin: 14px 0 8px;
+}
+
+/* Accessible Status: Symbol + Text + Color */
+.accessible-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 0px;
+    line-height: 1.3;
+}
+.accessible-status .status-symbol {
+    font-weight: 700;
+    font-size: 13px;
+}
+.accessible-status.status-ok {
+    color: var(--status-ok);
+    background: var(--status-ok-bg);
+    border: 1px solid rgba(39, 103, 73, 0.3);
+}
+.accessible-status.status-partial {
+    color: var(--status-partial);
+    background: var(--status-partial-bg);
+    border: 1px solid rgba(154, 103, 0, 0.3);
+}
+.accessible-status.status-conflict {
+    color: var(--status-conflict);
+    background: var(--status-conflict-bg);
+    border: 1px solid rgba(162, 59, 50, 0.3);
+}
+.accessible-status.status-insufficient {
+    color: var(--status-insufficient);
+    background: var(--status-insufficient-bg);
+    border: 1px solid rgba(102, 112, 133, 0.3);
+}
+.accessible-status.status-excluded {
+    color: var(--status-excluded);
+    background: var(--status-excluded-bg);
+    border: 1px solid rgba(71, 84, 103, 0.3);
+}
+.accessible-status.status-pending {
+    color: var(--navy);
+    background: #eef2f6;
+    border: 1px solid rgba(24, 50, 74, 0.25);
+}
+
+/* Original Evidence Quote in Serif */
+.source-quote {
+    border-left: 3px solid var(--gold);
+    margin: 16px 0 20px;
+    padding: 12px 18px;
+    background: #fafaf8;
+    border-radius: 0;
+}
+.source-quote .source-kicker {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+.source-quote blockquote {
+    font-family: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", serif;
+    font-size: 15px;
+    line-height: 1.75;
+    margin: 6px 0 8px;
+    color: #212529;
+}
+.source-quote figcaption {
+    color: var(--muted);
+    font-size: 11px;
+    font-family: Inter, monospace;
+}
+
+/* Review Step Navigation Bar */
+.step-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 12px 20px;
+    margin: 18px 0 24px;
+    background: var(--surface);
+}
+.step-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+}
+.step-nav-item .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--line);
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    background: #fafaf8;
+}
+.step-nav-item.active {
+    color: var(--navy);
+    font-weight: 700;
+}
+.step-nav-item.active .step-num {
+    background: var(--navy);
+    color: #fff;
+    border-color: var(--navy);
+}
+.step-nav-item.done {
+    color: var(--status-ok);
+    font-weight: 650;
+}
+.step-nav-item.done .step-num {
+    background: var(--status-ok-bg);
+    color: var(--status-ok);
+    border-color: rgba(39, 103, 73, 0.4);
+}
+.step-nav-divider {
+    color: #b8c1cc;
+    font-size: 12px;
+    user-select: none;
+}
+
+/* Editorial Claim Box */
+.claim-editorial-box {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 16px 0 18px;
+    margin: 12px 0 20px;
+}
+.claim-editorial-kicker {
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+.claim-editorial-amount {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 8px;
+    letter-spacing: -0.02em;
+}
+.claim-editorial-desc {
+    font-size: 14px;
+    line-height: 1.6;
+    color: #334155;
+    margin: 0;
+}
+
+/* Review Items List (Editorial Fact Rows) */
+.claim-items-list {
+    border-top: 1px solid var(--line);
+    margin: 16px 0 24px;
+}
+.claim-item-row {
+    border-bottom: 1px solid var(--line);
+    padding: 14px 0 16px;
+}
+.claim-item-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.claim-item-code {
+    font-family: Inter, monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+}
+.claim-item-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 4px;
+    line-height: 1.4;
+}
+.claim-item-amount {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+}
+
+/* Review Issues (Evidence Conflict Matrix) */
+.review-issue {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 18px 0;
+    margin: 16px 0 24px;
+}
+.issue-kicker {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.review-issue h3 {
+    margin: 6px 0 14px;
+    color: var(--ink);
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+.issue-materials {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    padding: 12px 0;
+    border-top: 1px solid #edf0f3;
+    border-bottom: 1px solid #edf0f3;
+}
+.material-col small {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+.material-quote {
+    font-family: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", serif;
+    font-size: 13.5px;
+    line-height: 1.6;
+    margin: 0;
+    color: #212529;
+}
+.issue-conclusion, .issue-next {
+    padding-top: 12px;
+    font-size: 13px;
+}
+.issue-conclusion b, .issue-next b {
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 2px;
+}
+.issue-conclusion p, .issue-next p {
+    margin: 0;
+    line-height: 1.5;
+}
+.issue-next p {
+    color: var(--navy);
+    font-weight: 600;
+}
+
+/* High Risk Transaction Panel */
+.risk-panel {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    border-left: 3px solid var(--status-conflict);
+    padding: 16px 18px;
+    margin: 16px 0 22px;
+    background: #ffffff;
+}
+.risk-kicker {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    text-transform: uppercase;
+    font-weight: 600;
+}
+.risk-panel h3 {
+    margin: 8px 0 12px;
+    color: var(--ink);
+    font-size: 18px;
+    font-weight: 700;
+}
+.risk-panel h3 .risk-amount {
+    float: right;
+    color: var(--navy);
+    font-size: 20px;
+    font-variant-numeric: tabular-nums;
+}
+.risk-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px 18px;
+    border-top: 1px solid #edf0f3;
+    padding: 12px 0 8px;
+    font-size: 13px;
+}
+.risk-grid small {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+}
+.risk-reason {
+    color: var(--status-conflict);
+    font-size: 13px;
+    margin: 8px 0 0;
+    line-height: 1.5;
+}
+
+/* Review Summary Memo */
+.review-summary {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: #ffffff;
+    padding: 20px 22px;
+    margin: 16px 0 24px;
+}
+.review-summary h2 {
+    margin: 8px 0 10px;
+    font-size: 22px;
+    font-weight: 700;
+}
+.review-summary p {
+    max-width: 840px;
+    color: #475467;
+    line-height: 1.65;
+    margin: 0;
+    font-size: 14px;
+}
+
+/* Evidence Card */
+.evidence-card {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: transparent;
+    padding: 16px 0;
+    margin: 14px 0 20px;
+}
+.evidence-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+.evidence-header h4 {
+    color: var(--navy);
+    margin: 0;
+    font-size: 16px;
+    font-weight: 750;
+}
+.evidence-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px 20px;
+}
+.evidence-cell {
+    font-size: 13.5px;
+}
+.evidence-label {
+    color: var(--muted);
+    font-size: 11.5px;
+    display: block;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.evidence-value {
+    color: var(--ink);
+    font-size: 15px;
+    font-weight: 650;
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Accessible Notice */
+.accessible-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 10px 0 14px;
+    border-radius: 0px;
+}
+.accessible-notice .notice-icon {
+    font-weight: 700;
+    font-size: 14px;
+    line-height: 1.3;
+}
+.accessible-notice.ok {
+    background: var(--status-ok-bg);
+    border-left: 3px solid var(--status-ok);
+    color: var(--status-ok);
+}
+.accessible-notice.warn {
+    background: var(--status-partial-bg);
+    border-left: 3px solid var(--status-partial);
+    color: #784c00;
+}
+.accessible-notice.danger {
+    background: var(--status-conflict-bg);
+    border-left: 3px solid var(--status-conflict);
+    color: var(--status-conflict);
+}
+
+/* Legal Notice */
+.legal-notice {
+    border-left: 3px solid var(--navy);
+    background: #f4f6f8;
+    color: #334155;
+    padding: 12px 16px;
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 20px 0;
+    border-radius: 0;
+}
+
+/* Topology Diagram Container */
+.topology-shell {
+    background: #ffffff;
+    border: 1px solid var(--line);
+    border-radius: 0px;
+    padding: 16px;
+    margin: 12px 0 20px;
+    overflow: auto;
+}
+.topology-shell pre {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.4;
+    font-family: Inter, monospace;
+}
+
+/* Streamlit Native Controls Override */
+div[data-testid="stDataFrame"] {
+    border: 1px solid var(--line) !important;
+    border-radius: 0px !important;
+    overflow: hidden;
+    background: var(--surface) !important;
+}
+div[data-testid="stExpander"] {
+    border: 1px solid var(--line) !important;
+    border-radius: 0px !important;
+    background: transparent !important;
+}
+.stButton > button, .stDownloadButton > button {
+    border-radius: 2px !important;
+    min-height: 42px !important;
+    font-weight: 650 !important;
+    letter-spacing: 0.02em !important;
+}
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {
+    background: var(--navy) !important;
+    border-color: var(--navy) !important;
+    color: #ffffff !important;
+}
+.stButton > button[kind="primary"]:hover, .stDownloadButton > button[kind="primary"]:hover {
+    background: var(--navy-hover) !important;
+    border-color: var(--navy-hover) !important;
+}
+.stButton > button[kind="secondary"], .stDownloadButton > button[kind="secondary"] {
+    background: #ffffff !important;
+    border-color: var(--line) !important;
+    color: var(--ink) !important;
+}
+.stButton > button[kind="secondary"]:hover, .stDownloadButton > button[kind="secondary"]:hover {
+    background: #f4f6f8 !important;
+    border-color: #bcc3cd !important;
+}
+[data-testid="stFileUploader"] {
+    border: 1px dashed #9aa6b2 !important;
+    border-radius: 0px !important;
+    background: var(--surface) !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 22px;
+    border-bottom: 1px solid var(--line);
+    background: transparent;
+}
+[data-testid="stTabs"] [data-baseweb="tab"] {
+    padding: 10px 4px;
+    font-size: 14px;
+    font-weight: 550;
+    color: var(--muted);
+    border-radius: 0px !important;
+    border-bottom: 2px solid transparent !important;
+    background: transparent !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] {
+    color: var(--navy) !important;
+    font-weight: 700 !important;
+    border-bottom-color: var(--navy) !important;
+}
+
+/* Accessible focus ring */
+*:focus-visible {
+    outline: 3px solid var(--focus-ring) !important;
+    outline-offset: 2px !important;
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
 }
 @media (max-width: 760px) {
-    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]) { flex-wrap:wrap; gap:10px 12px; }
-    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]) > div[data-testid="stColumn"] { flex:0 0 calc(50% - 6px) !important; width:calc(50% - 6px) !important; max-width:calc(50% - 6px) !important; min-width:calc(50% - 6px) !important; }
+    .stat-strip, .issue-materials, .risk-grid, .evidence-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .stat-item:nth-child(2) {
+        border-right: 0;
+    }
+    .stat-item:nth-child(n+3) {
+        border-top: 1px solid var(--line);
+    }
+}
+@media (max-width: 480px) {
+    .evidence-grid, .risk-grid, .issue-materials {
+        grid-template-columns: 1fr;
+    }
+    section.main > div {
+        padding-top: 1.2rem;
+    }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -205,48 +915,60 @@ def _supplementary_documents(result) -> list[dict[str, str]]:
     return restored
 
 
-def _render_mermaid(code: str, *, height: int = 340) -> None:
-    """Render a local, dependency-free relationship diagram."""
-    node_re = re.compile(r'([A-Za-z0-9_]+)\["(.*?)"\]')
-    edge_re = re.compile(r'([A-Za-z0-9_]+)\s+(?:-->|==>|-\.->)\|"(.*?)"\|\s+([A-Za-z0-9_]+)')
-    nodes = {node_id: label.replace("<br/>", " / ") for node_id, label in node_re.findall(code)}
-    edges = edge_re.findall(code)
-    if not nodes:
-        _render_topology_text(code)
+def _render_fund_flow(graph, *, height: int = 430, key: str | None = None) -> None:
+    """Render the fund flow topology with the Cytoscape.js + ELK component."""
+    if not graph.nodes or not graph.edges:
+        st.markdown(
+            '<div class="topology-shell"><div class="section-kicker">ACCOUNT RELATIONSHIP MAP · 拓扑结构</div>'
+            '<pre>暂无资金流向数据</pre></div>',
+            unsafe_allow_html=True,
+        )
         return
-    width, col_w, row_h = 1120, 330, 92
-    positions = {node_id: ((idx % 3) * col_w + 20, (idx // 3) * row_h + 38) for idx, node_id in enumerate(nodes)}
-    svg = [f'<svg viewBox="0 0 {width} {max(180, ((len(nodes)+2)//3)*row_h+60)}" role="img" aria-label="账户关系图" style="width:100%;height:auto;background:#fff;border:1px solid #d9dde3;">']
-    svg.append('<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#7b8794"/></marker></defs>')
-    for source, label, target in edges:
-        if source in positions and target in positions:
-            x1,y1=positions[source]; x2,y2=positions[target]
-            svg.append(f'<path d="M{x1+260},{y1} C{x1+290},{y1} {x2-30},{y2} {x2},{y2}" fill="none" stroke="#9aa6b2" stroke-width="1.5" marker-end="url(#arrow)"/>')
-            edge_label = html.escape(label.replace("&quot;", '"'))
-            svg.append(f'<text x="{(x1+x2)//2+120}" y="{(y1+y2)//2-5}" font-size="11" fill="#667085">{edge_label}</text>')
-    for node_id, label in nodes.items():
-        x,y=positions[node_id]
-        fill = "#f4ead6" if "关联第三方" in label else "#edf3f7"
-        svg.append(f'<rect x="{x}" y="{y-28}" width="260" height="56" rx="3" fill="{fill}" stroke="#18324a" stroke-width="1"/>')
-        svg.append(f'<text x="{x+12}" y="{y-5}" font-size="13" font-weight="600" fill="#15171a">{html.escape(label[:34])}</text>')
-        if len(label) > 34: svg.append(f'<text x="{x+12}" y="{y+14}" font-size="11" fill="#667085">{html.escape(label[34:68])}</text>')
-    svg.append('</svg>')
-    st.markdown('<div class="topology-shell">' + "".join(svg) + '</div>', unsafe_allow_html=True)
 
+    from components.fund_flow import render_fund_flow, topology_to_payload
 
-def _render_topology_text(code: str) -> None:
-    """Reliable local fallback for the account map when Mermaid is unavailable."""
-    lines = []
-    for line in code.splitlines():
-        clean = line.strip()
-        if not clean or clean.startswith(("graph ", "%%", "classDef", "subgraph", "end")):
-            continue
-        lines.append(clean)
-    st.markdown(
-        '<div class="topology-shell"><div class="section-number">ACCOUNT RELATIONSHIP MAP</div>'
-        f'<pre>{html.escape(chr(10).join(lines) or "暂无资金流向数据")}</pre></div>',
-        unsafe_allow_html=True,
-    )
+    payload = topology_to_payload(graph)
+    state = render_fund_flow(payload, height=height, key=key)
+
+    selection = None
+    if state is not None:
+        selection = getattr(state, "selection", None)
+        if selection is None and isinstance(state, dict):
+            selection = state.get("selection")
+    if not selection:
+        st.caption("点击图中账户或资金连线可查看来源明细；滚轮缩放、拖拽平移。")
+        return
+
+    if selection.get("type") == "node":
+        role_cn = {
+            "victim": "被害人 / 资金来源",
+            "primary_suspect": "涉案一级账户",
+            "secondary_account": "关联第三方账户",
+        }.get(selection.get("role"), "其他账户")
+        _evidence_card(
+            f"账户 · {selection.get('name', '-')}",
+            [
+                ("账户性质", role_cn),
+                ("脱敏账号", selection.get("masked_account") or "-"),
+                ("累计流入", selection.get("total_in_full", "-")),
+                ("累计流出", selection.get("total_out_full", "-")),
+            ],
+        )
+    elif selection.get("type") == "edge":
+        tx_ids = selection.get("transaction_ids") or []
+        date_min, date_max = selection.get("date_min", ""), selection.get("date_max", "")
+        dates = date_min if date_min == date_max else f"{date_min} ~ {date_max}"
+        reason = selection.get("reason") or ""
+        _evidence_card(
+            f"资金往来 · {selection.get('amount_full', '-')}",
+            [
+                ("交易笔数", f"{selection.get('count', 0)} 笔"),
+                ("处置状态", selection.get("disposition_label", "-")),
+                ("日期范围", dates or "-"),
+                ("说明", REASON_TO_CN.get(reason, reason) or "-"),
+                ("来源流水号", "、".join(tx_ids[:8]) + (" …" if len(tx_ids) > 8 else "") or "-"),
+            ],
+        )
 
 
 def _save_confirmed_claim(database_path: Path, claim) -> None:
@@ -406,86 +1128,240 @@ def _restore_case_into_session(database_path: Path, case_id: str) -> bool:
     return True
 
 
-def _header(title: str, subtitle: str) -> None:
-    st.markdown(f'<p class="workspace-title">{title}</p><p class="workspace-subtitle">{subtitle}</p>', unsafe_allow_html=True)
+def render_case_masthead(
+    case_id: str,
+    *,
+    status: str = "◌ 等待人工复核",
+    case_name: str | None = None,
+    case_type: str = "诈骗罪",
+    data_classification: str = "审查起诉阶段",
+    review_stage: str = "模拟案件",
+) -> None:
+    """Render the single Swiss editorial case heading shared by the workspaces."""
+    if not case_name:
+        if case_id == "GOLD_CASE_001":
+            title = "何某涉嫌诈骗案"
+            sub = "资金证据审查"
+            if data_classification == "演示案件":
+                data_classification = "实战评测卷宗"
+            if case_type == "诈骗案件":
+                case_type = "诈骗罪"
+        elif case_id in {"CASE-0001", "DEMO_CASE_001", "D01"}:
+            title = "何某等涉嫌诈骗案 (D01 演示案)"
+            sub = "资金证据核验"
+        else:
+            title = f"{case_id} 涉嫌经济犯罪案"
+            sub = "资金证据审查"
+    else:
+        title = case_name
+        sub = "资金证据核验"
 
-
-def render_case_masthead(case_id: str, *, status: str = "待人工复核", case_name: str | None = None,
-                         case_type: str = "诈骗案件", data_classification: str = "演示案件",
-                         review_stage: str = "证据审查") -> None:
-    """Render the single editorial case heading shared by the four workspaces."""
-    title = case_name or "资金证据核验"
     st.markdown(
-        f'<header class="case-masthead"><div class="masthead-top"><span>CASE / {case_id}</span><span class="masthead-status">{status}</span></div>'
-        f'<h1>{title}</h1><p class="masthead-subtitle">资金证据核验</p>'
-        f'<div class="masthead-meta">{case_type} <span>·</span> {data_classification} <span>·</span> {review_stage}</div></header>',
+        f'<header class="case-masthead">'
+        f'<div class="masthead-top">'
+        f'<span class="masthead-case-code">CASE / {case_id}</span>'
+        f'<span class="masthead-status-badge">{status}</span>'
+        f'</div>'
+        f'<h1>{title}</h1>'
+        f'<p class="masthead-subtitle">{sub}</p>'
+        f'<div class="masthead-meta">'
+        f'<span>{case_type}</span>'
+        f'<span class="meta-dot">·</span>'
+        f'<span>{data_classification}</span>'
+        f'<span class="meta-dot">·</span>'
+        f'<span>{review_stage}</span>'
+        f'</div>'
+        f'</header>',
         unsafe_allow_html=True,
     )
 
 
 def render_stat_strip(items: list[tuple[str, str, str]]) -> None:
     cells = "".join(
-        f'<div class="stat-item"><div class="stat-label">{label}</div><div class="stat-value">{value}</div><div class="stat-note">{note}</div></div>'
+        f'<div class="stat-item">'
+        f'<div class="stat-label">{label}</div>'
+        f'<div class="stat-value">{value}</div>'
+        f'<div class="stat-note">{note}</div>'
+        f'</div>'
         for label, value, note in items
     )
     st.markdown(f'<div class="stat-strip">{cells}</div>', unsafe_allow_html=True)
 
 
 def render_section_heading(number: str, title: str, subtitle: str | None = None) -> None:
-    extra = f'<span>{subtitle}</span>' if subtitle else ""
-    st.markdown(f'<div class="section-heading"><span class="section-number">{number}</span><strong>{title}</strong>{extra}</div>', unsafe_allow_html=True)
+    extra = f'<span class="heading-sub">{subtitle}</span>' if subtitle else ""
+    st.markdown(
+        f'<div class="section-heading">'
+        f'<span class="section-kicker">{number}</span>'
+        f'<strong>{title}</strong>'
+        f'{extra}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+STATUS_CONFIG = {
+    "SUPPORTED": {"symbol": "✓", "text": "已支持", "tone": "ok", "class": "status-ok"},
+    "FULLY_CORROBORATED": {"symbol": "✓", "text": "完整覆盖", "tone": "ok", "class": "status-ok"},
+    "PARTIAL": {"symbol": "◐", "text": "部分支持", "tone": "partial", "class": "status-partial"},
+    "PARTIALLY_CORROBORATED": {"symbol": "◐", "text": "部分覆盖", "tone": "partial", "class": "status-partial"},
+    "CONFLICT": {"symbol": "!", "text": "存在冲突", "tone": "conflict", "class": "status-conflict"},
+    "CONFLICTING": {"symbol": "!", "text": "存在冲突", "tone": "conflict", "class": "status-conflict"},
+    "INSUFFICIENT": {"symbol": "—", "text": "证据不足", "tone": "insufficient", "class": "status-insufficient"},
+    "UNSUPPORTED": {"symbol": "—", "text": "暂未支持", "tone": "insufficient", "class": "status-insufficient"},
+    "EXCLUDED": {"symbol": "×", "text": "予以排除", "tone": "excluded", "class": "status-excluded"},
+    "PENDING_REVIEW": {"symbol": "◌", "text": "待人工复核", "tone": "pending", "class": "status-pending"},
+    "PENDING": {"symbol": "◌", "text": "待人工核定", "tone": "pending", "class": "status-pending"},
+    "HUMAN_CONFIRMED": {"symbol": "✓", "text": "人工复核确认", "tone": "ok", "class": "status-ok"},
+    "SYSTEM_PROPOSED": {"symbol": "◌", "text": "系统初始建议", "tone": "pending", "class": "status-pending"},
+}
+
+STATUS_LABELS = {k: f"{v['symbol']} {v['text']}" for k, v in STATUS_CONFIG.items()}
 
 
 def render_status_label(label: str, tone: str = "neutral") -> str:
-    symbols = {"ok": "✓", "partial": "◐", "danger": "!", "muted": "—", "excluded": "×"}
-    return f'<span class="status-label {tone}">{symbols.get(tone, "·")} {label}</span>'
+    if label in STATUS_CONFIG:
+        cfg = STATUS_CONFIG[label]
+    else:
+        cfg = {"symbol": "·", "text": label, "class": f"status-{tone}"}
+    return f'<span class="accessible-status {cfg["class"]}"><span class="status-symbol">{cfg["symbol"]}</span> {cfg["text"]}</span>'
+
+
+def _status_label(value: str) -> str:
+    if value in STATUS_CONFIG:
+        return f"{STATUS_CONFIG[value]['symbol']} {STATUS_CONFIG[value]['text']}"
+    return STATUS_LABELS.get(value, value)
+
+
+def _status_class(value: str) -> str:
+    if value in {"CONFLICTING", "CONFLICT"}:
+        return "conflict"
+    if value in {"PENDING_REVIEW", "PENDING", "SYSTEM_PROPOSED"}:
+        return "pending"
+    if value in {"FULLY_CORROBORATED", "SUPPORTED", "HUMAN_CONFIRMED"}:
+        return "ok"
+    if value in {"PARTIALLY_CORROBORATED", "PARTIAL"}:
+        return "partial"
+    if value in {"EXCLUDED"}:
+        return "excluded"
+    return "insufficient"
 
 
 def render_source_quote(source: str, text: str, locator: str = "") -> None:
     st.markdown(
-        f'<figure class="source-quote"><div class="source-kicker">SOURCE / {source}</div><blockquote>“{text}”</blockquote>'
-        f'<figcaption>{locator}</figcaption></figure>', unsafe_allow_html=True,
+        f'<figure class="source-quote">'
+        f'<div class="source-kicker">卷宗材料出处 / {html.escape(source)}</div>'
+        f'<blockquote>“{html.escape(text)}”</blockquote>'
+        f'<figcaption>{html.escape(locator)}</figcaption>'
+        f'</figure>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_review_step_indicator(step1_done: bool, step2_done: bool, step3_done: bool) -> None:
+    s1_cls = "done" if step1_done else "active"
+    s1_sym = "✓" if step1_done else "01"
+    s2_cls = "done" if step2_done else ("active" if step1_done else "idle")
+    s2_sym = "✓" if step2_done else "02"
+    s3_cls = "done" if step3_done else ("active" if step2_done else "idle")
+    s3_sym = "✓" if step3_done else "03"
+
+    st.markdown(
+        f'<nav class="step-nav" aria-label="审查阶段流转">'
+        f'<div class="step-nav-item {s1_cls}"><span class="step-num">{s1_sym}</span><span>核准指控事实主张</span></div>'
+        f'<div class="step-nav-divider">──➔</div>'
+        f'<div class="step-nav-item {s2_cls}"><span class="step-num">{s2_sym}</span><span>穿透核验候选流水</span></div>'
+        f'<div class="step-nav-divider">──➔</div>'
+        f'<div class="step-nav-item {s3_cls}"><span class="step-num">{s3_sym}</span><span>签署复核底稿确认</span></div>'
+        f'</nav>',
+        unsafe_allow_html=True,
     )
 
 
 def render_review_issue(issue_id: str, title: str, status: str, materials: list[dict], conclusion: str, next_action: str) -> None:
-    rows = "".join(f'<div><b>{m.get("source", "材料")}</b><p>{m.get("finding", "-")}</p></div>' for m in materials)
+    rows = "".join(
+        f'<div class="material-col">'
+        f'<small>{html.escape(m.get("source", "材料"))}</small>'
+        f'<p class="material-quote">“{html.escape(m.get("finding", "-"))}”</p>'
+        f'</div>'
+        for m in materials
+    )
     st.markdown(
-        f'<article class="review-issue"><div class="issue-kicker">REVIEW ISSUE / {issue_id} <span>{status}</span></div>'
-        f'<h3>{title}</h3><div class="issue-materials">{rows}</div><div class="issue-conclusion"><b>当前核验</b><p>{conclusion}</p></div>'
-        f'<div class="issue-next"><b>NEXT ACTION</b><p>{next_action}</p></div></article>', unsafe_allow_html=True,
+        f'<article class="review-issue">'
+        f'<div class="issue-kicker">'
+        f'<span>02 / ISSUE · {issue_id}</span>'
+        f'<span class="accessible-status status-conflict">{status}</span>'
+        f'</div>'
+        f'<h3>{html.escape(title)}</h3>'
+        f'<div class="issue-materials">{rows}</div>'
+        f'<div class="issue-conclusion"><b>当前核验发现</b><p>{html.escape(conclusion)}</p></div>'
+        f'<div class="issue-next"><b>NEXT ACTION · 回查事项</b><p>{html.escape(next_action)}</p></div>'
+        f'</article>',
+        unsafe_allow_html=True,
     )
 
 
 def render_high_risk_transaction(priority: str, tx, candidate) -> None:
     st.markdown(
-        f'<article class="risk-panel"><div class="risk-kicker">{priority} · HIGH RISK TRANSACTION <span>! 待核查</span></div>'
-        f'<h3>{tx.transaction_id} <strong>¥{tx.amount:,.2f}</strong></h3>'
-        f'<div class="risk-grid"><div><small>日期</small>{tx.date}</div><div><small>付款人</small>{tx.payer_name or "-"}</div>'
-        f'<div><small>收款人</small>{tx.payee_name or "-"}</div><div><small>来源定位</small>{_source_locator_label(tx)}</div></div>'
-        f'<p class="risk-reason">{_risks_to_chinese(candidate.risk_codes)}</p></article>', unsafe_allow_html=True,
+        f'<article class="risk-panel">'
+        f'<div class="risk-kicker">'
+        f'<span>{priority} · HIGH RISK TRANSACTION</span>'
+        f'<span class="accessible-status status-conflict">! 待核查阻断项</span>'
+        f'</div>'
+        f'<h3>▌ {tx.transaction_id} <strong class="risk-amount">¥{tx.amount:,.2f}</strong></h3>'
+        f'<div class="risk-grid">'
+        f'<div><small>交易日期</small>{tx.date}</div>'
+        f'<div><small>付款人</small>{tx.payer_name or "-"}</div>'
+        f'<div><small>收款人</small>{tx.payee_name or "-"}</div>'
+        f'<div><small>来源定位</small>{_source_locator_label(tx)}</div>'
+        f'</div>'
+        f'<p class="risk-reason"><strong>风险说明：</strong>{_risks_to_chinese(candidate.risk_codes)}</p>'
+        f'</article>',
+        unsafe_allow_html=True,
     )
 
 
 def render_review_summary(title: str, text: str) -> None:
-    st.markdown(f'<div class="review-summary"><div class="section-number">REVIEW MEMO</div><h2>{title}</h2><p>{text}</p></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="review-summary">'
+        f'<div class="section-kicker">REVIEW MEMO · 审查备忘</div>'
+        f'<h2>{html.escape(title)}</h2>'
+        f'<p>{html.escape(text)}</p>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
-STATUS_LABELS = {
-    "PENDING_REVIEW": "◌ 待人工复核",
-    "PARTIALLY_CORROBORATED": "◐ 部分覆盖",
-    "FULLY_CORROBORATED": "✓ 完整覆盖",
-    "CONFLICTING": "! 存在冲突",
-    "UNSUPPORTED": "— 暂未支持",
-}
+def render_claim_review_items(claims_list, result, decision) -> None:
+    render_section_heading("02 / REVIEW ITEMS", "指控事实与核验状态", "逐笔主张对应状态及采纳依据")
+    decisions_dict = getattr(result, "system_decisions_by_claim", {}) or {}
 
+    html_items = []
+    for idx, c in enumerate(claims_list, 1):
+        c_decision = decisions_dict.get(c.id) if not decision or getattr(decision, "claim_id", None) != c.id else decision
+        status_val = c_decision.status.value if c_decision else "PENDING_REVIEW"
 
-def _status_label(value: str) -> str:
-    return STATUS_LABELS.get(value, value)
+        candidates = result.candidates_by_claim.get(c.id, []) if getattr(result, "candidates_by_claim", None) else result.candidates
+        has_conflict = any(cand.blocking_conflict or "THIRD_PARTY_RECIPIENT" in cand.risk_codes for cand in candidates)
+        if has_conflict and status_val != "FULLY_CORROBORATED":
+            status_val = "CONFLICTING"
 
+        cfg = STATUS_CONFIG.get(status_val, {"symbol": "·", "text": status_val, "class": "status-neutral"})
+        claim_code = f"C{idx:03d}"
+        desc = f"被害人 {c.victim_name} 向 {c.alleged_recipient_name or '指定账户'} 支付涉案款项 ({c.time_start} 至 {c.time_end})"
 
-def _status_class(value: str) -> str:
-    return "danger" if value == "CONFLICTING" else "warn" if value == "PENDING_REVIEW" else "ok" if value in {"FULLY_CORROBORATED", "PARTIALLY_CORROBORATED"} else ""
+        html_items.append(
+            f'<div class="claim-item-row">'
+            f'<div class="claim-item-meta">'
+            f'<span class="claim-item-code">{claim_code} · {c.id}</span>'
+            f'<span class="accessible-status {cfg["class"]}"><span class="status-symbol">{cfg["symbol"]}</span> {cfg["text"]}</span>'
+            f'</div>'
+            f'<div class="claim-item-title">{desc}</div>'
+            f'<div class="claim-item-amount">¥{c.claimed_amount:,.2f}</div>'
+            f'</div>'
+        )
+
+    st.markdown('<div class="claim-items-list">' + "".join(html_items) + '</div>', unsafe_allow_html=True)
 
 
 RULE_LABELS = {
@@ -544,9 +1420,24 @@ REASON_TO_CN = {v: k for k, v in REASON_CN.items()}
 
 
 def _evidence_card(title: str, items: list[tuple[str, str]], badge: tuple[str, str] | None = None) -> None:
-    badge_html = f'<span class="status-badge {badge[1]}">{badge[0]}</span>' if badge else ""
-    cells = "".join(f'<div><span class="evidence-label">{label}</span><span class="evidence-value">{value}</span></div>' for label, value in items)
-    st.markdown(f'<div class="evidence-card"><h4>{title} {badge_html}</h4><div class="evidence-grid">{cells}</div></div>', unsafe_allow_html=True)
+    badge_html = f'<span class="accessible-status status-{badge[1]}">{badge[0]}</span>' if badge else ""
+    cells = "".join(
+        f'<div class="evidence-cell">'
+        f'<span class="evidence-label">{label}</span>'
+        f'<span class="evidence-value">{value}</span>'
+        f'</div>'
+        for label, value in items
+    )
+    st.markdown(
+        f'<article class="evidence-card">'
+        f'<div class="evidence-header">'
+        f'<h4>{title}</h4>'
+        f'{badge_html}'
+        f'</div>'
+        f'<div class="evidence-grid">{cells}</div>'
+        f'</article>',
+        unsafe_allow_html=True,
+    )
 
 
 def _editor_records(edited) -> list[dict]:
@@ -601,6 +1492,16 @@ def case_page() -> None:
     data_label = "实战评测 GOLD_CASE_001" if active_case_id == "GOLD_CASE_001" else "演示案件"
     update_label = "已恢复本机签署快照" if st.session_state.get("decision") else "等待新操作"
     render_case_masthead(active_case_id, status=update_label, data_classification=data_label)
+    if current_result is not None:
+        _case_overview()
+        with st.expander("材料管理 · 新建或切换案件", expanded=False):
+            _materials_panel(active_case_id)
+    else:
+        _materials_panel(active_case_id)
+    st.markdown('<div class="legal-notice"><strong>司法证据核验声明：</strong>本系统只核验当前材料之间的资金证据对应关系，不作定罪、量刑或最终犯罪金额认定。</div>', unsafe_allow_html=True)
+
+
+def _materials_panel(active_case_id: str) -> None:
     case_id = st.text_input("案件编号", value=active_case_id)
     persist_locally = st.checkbox("保存脱敏后的本地案件记录", value=False, help="默认不保存上传材料；启用后仅写入本机 SQLite。")
     source_default = "实战评测(GOLD_CASE_001 · 736.8万)" if active_case_id == "GOLD_CASE_001" else "演示案件(D01)"
@@ -751,11 +1652,12 @@ def case_page() -> None:
     if failed_events:
         with st.expander("失败步骤日志"):
             st.dataframe([event.to_dict() for event in failed_events], width="stretch", hide_index=True)
+
+
+def _case_overview() -> None:
     result = st.session_state.get("result")
     if result is not None:
         decision = st.session_state.get("decision")
-        st.divider()
-        st.subheader("当前审查进度")
         claims_list = result.claims if result.claims else [result.claim]
         total_claimed = sum((c.claimed_amount for c in claims_list), Decimal("0")) if claims_list else Decimal("0")
         covered = decision.covered_amount if decision else Decimal("0")
@@ -767,54 +1669,61 @@ def case_page() -> None:
         net_claimed = max(total_claimed - refund_total, Decimal("0"))
         total_candidates = sum(len(cands) for cands in result.candidates_by_claim.values()) if result.candidates_by_claim else len(result.candidates)
 
+        render_section_heading("01 / OVERVIEW", "全案资金证据概览", "指控金额、流水核验与审查事项")
         if refund_total > 0:
             render_stat_strip([
-                ("指控涉案总额", f"¥{total_claimed:,.2f}", "起诉书付款主张"),
-                ("疑似转回", f"¥{refund_total:,.2f}", "待核验性质"),
-                ("未返还参考", f"¥{net_claimed:,.2f}", "数学差额参考"),
-                ("待复核", f"{total_candidates if not decision else 0:02d}", "ITEMS"),
+                ("指控金额", f"¥{total_claimed:,.2f}", "起诉书主张"),
+                ("已返还 (待查)", f"¥{refund_total:,.2f}", "案发前返还流水"),
+                ("未返还差额", f"¥{net_claimed:,.2f}", "当前参考差额"),
+                ("待复核事项", f"{total_candidates if not decision else 0:02d}", "审查事项"),
             ])
             st.info(f"【疑似返还流水提示】按账户关系和唯一交易事件识别到 {len(refund_txs)} 笔、¥{refund_total:,.2f} 元可能转回被害人账户；摘要不能单独证明收益、分红或法定冲减性质，净额仅作待核验参考（¥{net_claimed:,.2f}）。")
         else:
             render_stat_strip([
-                ("付款指控总额" if len(claims_list) > 1 else "付款指控", f"¥{total_claimed:,.2f}", "起诉书付款主张"),
-                ("资金证据覆盖", f"¥{covered:,.2f}", "银行流水确认"),
-                ("尚未覆盖", f"¥{max(total_claimed - covered, Decimal('0')):,.2f}", "当前差额"),
-                ("待复核", f"{total_candidates if not decision else 0:02d}", "ITEMS"),
+                ("指控金额", f"¥{total_claimed:,.2f}", "起诉书主张"),
+                ("已核验金额", f"¥{covered:,.2f}", "银行流水确认"),
+                ("尚待核验", f"¥{max(total_claimed - covered, Decimal('0')):,.2f}", "当前差额"),
+                ("待复核事项", f"{total_candidates if not decision else 0:02d}", "审查事项"),
             ])
 
-        if len(claims_list) > 1:
-            st.info(f"本案共提取到 {len(claims_list)} 笔涉案付款事实主张，可进入【资金证据核验】页分别复核。")
         supplementary_documents = st.session_state.get("supplementary_documents", [])
         if supplementary_documents:
             st.caption(
                 "已登记补充材料：" + "、".join(item["filename"] for item in supplementary_documents)
                 + "；这些材料已完成文字提取并保留来源名称，当前确定性金额核验仍以主链材料为准。"
             )
-        _evidence_card(
-            "付款事实主张 (首笔)" if len(claims_list) > 1 else "付款事实主张",
-            [("付款人", result.claim.victim_name), ("收款对象", result.claim.alleged_recipient_name or "待确认"),
-             ("指控日期", str(result.claim.time_start)), ("当前状态", _status_label(decision.status.value if decision else result.system_decision.status.value))],
-            (_status_label(decision.status.value if decision else result.system_decision.status.value), _status_class(decision.status.value if decision else result.system_decision.status.value)),
-        )
+
+        render_claim_review_items(claims_list, result, decision)
+
+        render_section_heading("03 / WORKFLOW", "审查执行链条与留痕", "确定性算法与经办人复核状态")
         steps = ["材料登记", "付款主张提取", "陈述交叉核验", "银行流水解析", "候选交易召回"]
         completed = {event.step for event in result.audit_events}
         progress_rows = []
         for label, key in zip(steps, ["claim_extraction", "statement_comparison", "transaction_parser", "transaction_parser", "candidate_matcher"]):
-            progress_rows.append({"状态": "已完成" if key in completed else "待处理", "审查步骤": label})
+            progress_rows.append({"状态": "✓ 已完成" if key in completed else "— 待处理", "审查步骤": label})
         progress_rows.extend([
-            {"状态": "已完成" if decision else "当前步骤", "审查步骤": "人工复核"},
-            {"状态": "已生成" if decision else "待处理", "审查步骤": "审查结论与留痕"},
+            {"状态": "✓ 已完成" if decision else "👉 当前步骤", "审查步骤": "人工复核"},
+            {"状态": "✓ 已生成" if decision else "— 待处理", "审查步骤": "审查结论与留痕"},
         ])
         st.dataframe(progress_rows, width="stretch", hide_index=True, column_config={"状态": st.column_config.TextColumn(width="small")})
-    st.markdown('<div class="legal-notice">本系统只核验当前材料之间的资金证据对应关系，不作定罪、量刑或最终犯罪金额认定。</div>', unsafe_allow_html=True)
+
+        if not decision:
+            st.markdown(
+                f'<div style="text-align:right;margin:20px 0 10px;">'
+                f'<span style="font-size:12.5px;color:var(--navy);font-weight:700;letter-spacing:0.04em;">'
+                f'{total_candidates:02d} ITEMS REQUIRE HUMAN REVIEW → 请前往【03 资金证据核验】'
+                f'</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
 
 def transactions_page(result) -> None:
-    render_case_masthead(result.claim.case_id, status="待人工复核" if "decision" not in st.session_state else "复核已完成", data_classification="实战评测" if result.claim.case_id == "GOLD_CASE_001" else "演示案件", review_stage="资金流水")
+    status_label = "◌ 等待人工复核" if "decision" not in st.session_state else "✓ 复核已完成"
+    data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "演示案件"
+    render_case_masthead(result.claim.case_id, status=status_label, data_classification=data_label, review_stage="涉案资金流水总台账")
 
-    st.markdown('<div class="section-kicker">资金摘要</div>', unsafe_allow_html=True)
-    from legal_funds_agent.services.topology_service import build_fund_flow_topology, generate_mermaid_graph
+    from legal_funds_agent.services.topology_service import build_fund_flow_topology
     claims = result.claims if result.claims else [result.claim]
     decision = st.session_state.get("decision")
     all_candidates = [candidate for candidates in result.candidates_by_claim.values() for candidate in candidates]
@@ -830,19 +1739,31 @@ def transactions_page(result) -> None:
     focus_transactions = focus_transactions or result.transactions
     topo = build_fund_flow_topology(claims, focus_transactions, decision)
     all_topo = build_fund_flow_topology(claims, result.transactions, decision)
-    mermaid_code = generate_mermaid_graph(topo, compact=True)
 
-    direct_total = sum((tx.amount for tx in pay_txs), Decimal("0")) if 'pay_txs' in locals() else sum((tx.amount for tx in result.transactions.values() if tx.id in candidate_ids), Decimal("0"))
-    third_party_total = sum((tx.amount for tx in result.transactions.values() if tx.id in candidate_ids and tx.payee_account_id and tx.payee_account_id != tx.payee_account), Decimal("0"))
+    third_party_tx_ids = {
+        candidate.transaction_id for candidate in all_candidates
+        if "THIRD_PARTY_RECIPIENT" in candidate.risk_codes
+    }
+    direct_total = sum(
+        (tx.amount for tx in result.transactions.values()
+         if tx.id in candidate_ids and tx.id not in third_party_tx_ids),
+        Decimal("0"),
+    )
+    third_party_total = sum(
+        (tx.amount for tx in result.transactions.values()
+         if tx.id in third_party_tx_ids),
+        Decimal("0"),
+    )
+
+    render_section_heading("01 / STATS", "资金流向与账户穿透总计", "被害人转出与涉案账户接收统计")
     render_stat_strip([
-        ("被害人支付", f"¥{sum((c.claimed_amount for c in claims), Decimal('0')):,.2f}", "CLAIM"),
-        ("直接账户收款", f"¥{direct_total:,.2f}", "ACCOUNT FLOW"),
-        ("第三方账户", f"¥{third_party_total:,.2f}", "待核验"),
-        ("疑似转回", f"¥{sum((tx.amount for tx in refund_txs), Decimal('0')):,.2f}", "待核验性质"),
+        ("被害人支付总额", f"¥{sum((c.claimed_amount for c in claims), Decimal('0')):,.2f}", "起诉指控总数"),
+        ("直接账户收款", f"¥{direct_total:,.2f}", "嫌疑人名下账户"),
+        ("第三方代收", f"¥{third_party_total:,.2f}", "非嫌疑人代收待查"),
+        ("疑似转回流水", f"¥{sum((tx.amount for tx in refund_txs), Decimal('0')):,.2f}", "待核验法定性质"),
     ])
-    st.markdown('<div class="section-kicker">资金底册</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="section-kicker">涉案银行流水分类台账</div>', unsafe_allow_html=True)
+    render_section_heading("02 / LEDGER", "涉案银行流水分类台账", "按资金流向、账户关系和规范化标准分流展示")
     st.caption("银行流水按资金方向和账户关系区分为【涉案支付流出】与【疑似转回流水】，所有性质仍需人工核验。")
 
     refund_keys = {transaction_canonical_key(tx) for tx in refund_txs}
@@ -906,15 +1827,16 @@ def transactions_page(result) -> None:
         st.caption(f"全案总计导入 {len(result.transactions)} 笔原始银行记录；当前筛选显示 {len(filtered_rows)} 笔。前两类台账按 canonical 唯一事件展示。")
 
     with tab_graph:
-        st.markdown('<div class="section-kicker">账户关系图</div>', unsafe_allow_html=True)
-        st.caption(f"重点关联资金：{len(topo.nodes)} 个账户节点、{len(topo.edges)} 条唯一事件。")
-        _render_mermaid(mermaid_code, height=330)
-        with st.expander("查看详细拓扑（含单笔日期与处置状态）", expanded=False):
-            _render_mermaid(generate_mermaid_graph(all_topo, compact=False), height=560)
+        render_section_heading("03 / TOPOLOGY", "涉案账户资金关系图", f"重点关联资金：{len(topo.nodes)} 个账户节点、{len(topo.edges)} 条唯一交易事件")
+        _render_fund_flow(topo, height=430, key="fund_flow_focus")
+        with st.expander("查看全案资金流向图（全部账户与流水）", expanded=False):
+            _render_fund_flow(all_topo, height=560, key="fund_flow_all")
 
 
 def review_page(result) -> None:
-    render_case_masthead(result.claim.case_id, status="待人工复核" if "decision" not in st.session_state else "复核已完成", data_classification="实战评测" if result.claim.case_id == "GOLD_CASE_001" else "演示案件", review_stage="人工复核")
+    status_label = "◌ 等待人工复核" if "decision" not in st.session_state else "✓ 复核已完成"
+    data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "演示案件"
+    render_case_masthead(result.claim.case_id, status=status_label, data_classification=data_label, review_stage="资金证据核验与人工复核")
     claims_list = result.claims if result.claims else [result.claim]
     if len(claims_list) > 1:
         claim_map = {
@@ -933,22 +1855,8 @@ def review_page(result) -> None:
     is_claim_confirmed = (claim.extraction_status == "human_confirmed")
     is_decision_made = ("decision" in st.session_state and getattr(st.session_state.decision, "claim_id", None) == claim.id)
 
-    # 步骤指引卡
-    st.markdown(f"""
-<div style="background:#fff;border:1px solid #d8e0e5;border-radius:8px;padding:12px 18px;margin-bottom:18px;display:flex;justify-content:space-around;align-items:center;font-size:13px;box-shadow:0 1px 2px rgba(0,0,0,0.03);">
-  <div style="color:{'#15803d' if is_claim_confirmed else '#1f5f8b'};font-weight:700;">
-    {'✅' if is_claim_confirmed else '👉'} 步骤一：核准起诉事实主张
-  </div>
-  <div style="color:#cbd5e1;">➔</div>
-  <div style="color:{'#15803d' if is_decision_made else ('#1f5f8b' if is_claim_confirmed else '#94a3b8')};font-weight:700;">
-    {'✅' if is_decision_made else ('👉' if is_claim_confirmed else '⏳')} 步骤二：逐笔/批量采信流水
-  </div>
-  <div style="color:#cbd5e1;">➔</div>
-  <div style="color:{'#15803d' if is_decision_made else '#94a3b8'};font-weight:700;">
-    {'✅' if is_decision_made else '⏳'} 步骤三：签署复核确认
-  </div>
-</div>
-""", unsafe_allow_html=True)
+    # 步骤指引导航条
+    render_review_step_indicator(is_claim_confirmed, is_decision_made, is_decision_made)
 
     # Use the same relationship-based, canonical refund set as the other pages.
     refund_list = identify_refund_transactions([claim], result.transactions.values())
@@ -957,10 +1865,10 @@ def review_page(result) -> None:
 
     if total_refund > 0:
         render_stat_strip([
-            ("指控支付总额", f"¥{claim.claimed_amount:,.2f}", "CLAIM"),
-            ("疑似转回流水", f"¥{total_refund:,.2f}", "待核验性质"),
-            ("未返还参考", f"¥{net_claim:,.2f}", "数学差额"),
-            ("待核候选", f"{len(candidates):02d}", "ITEMS"),
+            ("指控支付总额", f"¥{claim.claimed_amount:,.2f}", "起诉书主张事实"),
+            ("疑似转回流水", f"¥{total_refund:,.2f}", "案发前转回待查"),
+            ("未返还参考", f"¥{net_claim:,.2f}", "数学参考差额"),
+            ("待核候选流水", f"{len(candidates):02d}", "审查事项"),
         ])
 
         with st.expander(f"【疑似转回流水台账】按账户关系识别 {len(refund_list)} 笔（共计 ¥{total_refund:,.2f}），待人工核验", expanded=True):
@@ -980,17 +1888,24 @@ def review_page(result) -> None:
             st.dataframe(r_rows, width="stretch", hide_index=True)
     else:
         render_stat_strip([
-            ("指控涉案金额", f"¥{claim.claimed_amount:,.2f}", "CLAIM"),
-            ("召回候选流水", f"{len(candidates):02d}", "TRANSACTIONS"),
-            ("当前核验状态", _status_label(sys_decision.status.value), "STATUS"),
-            ("材料冲突标记", f"{len(result.statement_conflicts):02d}", "ITEMS"),
+            ("指控涉案金额", f"¥{claim.claimed_amount:,.2f}", "起诉书主张事实"),
+            ("召回候选流水", f"{len(candidates):02d}", "银行流水匹配项"),
+            ("当前核验状态", _status_label(sys_decision.status.value), "系统建议状态"),
+            ("材料冲突标记", f"{len(result.statement_conflicts):02d}", "审查阻断项"),
         ])
 
-    st.markdown(f"""
-<div style="background:#f8fafc;border-left:4px solid #1f5f8b;padding:12px 16px;border-radius:0 6px 6px 0;margin:12px 0;">
-  <strong>涉案事实主张概貌：</strong>被害人 <strong>{claim.victim_name}</strong> 于 {claim.time_start} 至 {claim.time_end} 按照嫌疑人指示向 <strong>{claim.alleged_recipient_name or '指定账户'}</strong> 支付款项，起诉指控金额共计 <strong>人民币 ¥{claim.claimed_amount:,.2f} 元</strong>。
-</div>
-""", unsafe_allow_html=True)
+    render_section_heading("01 / CLAIM", "起诉事实主张概貌", f"事实主张编号: {claim.id}")
+    st.markdown(
+        f'<div class="claim-editorial-box">'
+        f'<div class="claim-editorial-kicker">INDICTMENT CLAIM · 涉案金额</div>'
+        f'<div class="claim-editorial-amount">¥{claim.claimed_amount:,.2f}</div>'
+        f'<p class="claim-editorial-desc">'
+        f'起诉指控：被害人 <strong>{claim.victim_name}</strong> 于 {claim.time_start} 至 {claim.time_end} '
+        f'按照嫌疑人指示向 <strong>{claim.alleged_recipient_name or "指定涉案账户"}</strong> 支付款项。'
+        f'</p>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     with st.expander("查看起诉书事实主张原文出处与字符偏移", expanded=False):
         for locator in result.claim_locators:
@@ -998,7 +1913,7 @@ def review_page(result) -> None:
 
     # 步骤一：核准事实主张
     if not is_claim_confirmed:
-        st.warning("【第一步：事实主张核准】当前涉案事实主张由大模型初步提取。请复核上述金额、主体与时间范围。确认无误后请点击下方按钮核准，系统将解锁银行流水逐笔核验。")
+        st.warning("【第一步：事实主张核准】当前涉案事实主张由规则/大模型初步提取。请复核上述金额、主体与时间范围。确认无误后请点击下方按钮核准，系统将解锁银行流水逐笔核验。")
         if st.button("核准起诉事实主张，进入资金核验", type="primary", use_container_width=True):
             confirmed = confirm_claim_extraction(claim)
             if result.claims:
@@ -1015,37 +1930,53 @@ def review_page(result) -> None:
             st.rerun()
         return
 
-    st.markdown('<span class="status-ok">✔ 步骤一已完成：该涉案事实主张已由经办人员人工审核批准。</span>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="accessible-notice ok"><span class="notice-icon">✓</span> '
+        '<strong>步骤一已完成：</strong>该涉案付款事实主张已由办案经办人员人工审核批准。</div>',
+        unsafe_allow_html=True,
+    )
     if result.statement_conflicts:
-        st.error("被害人询问笔录与起诉书存在矛盾：" + "、".join([RISK_LABELS.get(r, r) for r in result.statement_conflicts]))
+        st.markdown(
+            f'<div class="accessible-notice danger"><span class="notice-icon">!</span> '
+            f'<strong>被害人陈述冲突：</strong>笔录与起诉书存在矛盾（{"、".join([RISK_LABELS.get(r, r) for r in result.statement_conflicts])}）。</div>',
+            unsafe_allow_html=True,
+        )
     else:
-        st.markdown('<span class="status-ok">✔ 被害人陈述笔录与起诉书在转账金额、时间跨度及收款对象上未发现冲突。</span>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="accessible-notice ok"><span class="notice-icon">✓</span> '
+            '<strong>言词证据一致：</strong>被害人陈述笔录与起诉书在转账金额、时间跨度及收款对象上未发现冲突。</div>',
+            unsafe_allow_html=True,
+        )
     if result.duplicate_groups:
         groups = [" / ".join(ids) for ids in result.duplicate_groups.values()]
-        st.error(f"发现 {len(groups)} 组疑似重复记账或镜像流水，请优先核实排除。")
+        st.markdown(
+            f'<div class="accessible-notice danger"><span class="notice-icon">!</span> '
+            f'<strong>重复记账/镜像流水预警：</strong>发现 {len(groups)} 组疑似重复记账或镜像流水，请优先核实排除。</div>',
+            unsafe_allow_html=True,
+        )
         with st.expander("查看重复/镜像流水组", expanded=False):
             st.dataframe([{"重复组": index, "流水编号": value} for index, value in enumerate(groups, 1)], width="stretch", hide_index=True)
 
     supplementary_documents = _supplementary_documents(result)
     conflict_matrix = build_evidence_conflict_matrix(result.transactions, supplementary_documents)
-    render_section_heading("02", "证据冲突与争议焦点", "言词材料与资金流水的并列回查")
+    render_section_heading("02 / CONFLICTS", "言词证据与流水冲突焦点", "言词材料与资金流水的并列交叉回查")
     if conflict_matrix:
         for conflict in conflict_matrix:
             render_review_issue(conflict["id"], conflict["title"], f"! {conflict['priority']}优先", conflict["materials"], conflict["conclusion"], conflict["next_action"])
     else:
-        st.markdown('<div class="review-summary"><strong>当前没有登记补充言词材料。</strong><p>资金流水核验队列仍可继续处理。</p></div>', unsafe_allow_html=True)
+        st.markdown('<div class="review-summary"><div class="section-kicker">EVIDENCE NOTICE</div><strong>当前没有登记补充言词材料。</strong><p>资金流水核验队列仍可继续处理。</p></div>', unsafe_allow_html=True)
 
     # Risk-first ordering keeps the audit queue aligned with review necessity.
     candidates = sort_candidates_for_review(candidates, result.transactions)
 
     # 步骤二：流水核验
-    st.markdown('<div class="section-kicker">待核验候选流水审查表</div>', unsafe_allow_html=True)
+    render_section_heading("03 / CANDIDATES", "待核验候选流水审查表", "按审核必要性与阻断风险智能排序")
     high_risk_candidates = [c for c in candidates if candidate_risk_level(c) == "高"]
     review_order = {candidate.transaction_id: index for index, candidate in enumerate(candidates, 1)}
     st.caption(f"已按审核必要性排序：P1 优先处理阻断风险，其次按风险分、金额和日期排列；重点核查 {len(high_risk_candidates)} 笔，常规候选 {len(candidates) - len(high_risk_candidates)} 笔。")
 
     if high_risk_candidates:
-        render_section_heading("03", "高风险交易", "逐笔核验，不进入批量采纳")
+        render_section_heading("03.1 / HIGH RISK", "高风险阻断交易", "必须逐笔核验，不进入批量采信")
         for candidate in high_risk_candidates:
             tx = result.transactions[candidate.transaction_id]
             render_high_risk_transaction(f"P{review_order[candidate.transaction_id]}", tx, candidate)
@@ -1108,7 +2039,7 @@ def review_page(result) -> None:
             "处置决断": cur_disp,
             "认定理由": cur_reason,
             "经办备注": "",
-            "风险等级": candidate_risk_level(candidate),
+            "风险等级": ("! 高风险" if candidate_risk_level(candidate) == "高" else ("◐ 中风险" if candidate_risk_level(candidate) == "中" else "— 常规")),
             "审核顺序": f"P{review_order[candidate.transaction_id]}",
             "流水号": tx.transaction_id,
             "交易日期": str(tx.date),
@@ -1127,7 +2058,7 @@ def review_page(result) -> None:
         candidate_rows,
         width="stretch",
         hide_index=True,
-         disabled=["风险等级", "审核顺序", "流水号", "交易日期", "付款人", "付款账户ID", "收款人", "收款账户ID", "金额", "核对规则", "风险提示", "原始证据定位", "_tid"],
+        disabled=["风险等级", "审核顺序", "流水号", "交易日期", "付款人", "付款账户ID", "收款人", "收款账户ID", "金额", "核对规则", "风险提示", "原始证据定位", "_tid"],
         column_config={
             "处置决断": st.column_config.SelectboxColumn(options=list(DISPOSITION_CN.keys()), required=True, width="medium"),
             "认定理由": st.column_config.SelectboxColumn(options=list(REASON_CN.keys()), required=True, width="medium"),
@@ -1142,7 +2073,7 @@ def review_page(result) -> None:
     st.caption("普通候选的完整字段、处置选择和原始行号统一保留在上方审查表；需要深查时按 P 编号回到对应行。")
 
     # 步骤三：签署复核确认
-    st.markdown('<div class="section-kicker">签署复核确认并保存底稿</div>', unsafe_allow_html=True)
+    render_section_heading("04 / SIGN", "签署复核确认并保存底稿", "经办人员对事实认定与流水处置进行不可篡改电子签署")
     c_r1, c_r2 = st.columns([1, 2])
     with c_r1:
         reviewer = st.text_input("复核人姓名 / 工号", value="检务复核官", key=f"reviewer_{claim.id}")
@@ -1194,9 +2125,6 @@ def review_page(result) -> None:
                             duplicate_groups=result.duplicate_groups,
                         )
                 else:
-                    # An explicit signature is the point at which the sanitized local checkpoint is created.
-                    # Save the pre-review audit events here; the two signature events
-                    # are persisted with the human decision below.
                     repository_path = _persist_result(result, audit_events=result.audit_events[:-2])
                     st.session_state.repository_path = repository_path
                     saved_decision = _save_human_review(repository_path, decision, result.audit_events[-2:])
@@ -1211,7 +2139,7 @@ def review_page(result) -> None:
                 st.query_params["case_id"] = result.claim.case_id
                 if checkpoint_created:
                     st.info("签署后的脱敏案件快照已保存到本机 SQLite；页面刷新后可自动恢复当前案件。")
-                st.success(f"已保存 v{decision.version} 人工复核确认：{_status_label(decision.status.value)}。请前往【审查结论与留痕】查看底稿和回查清单。")
+                st.success(f"已保存 v{decision.version} 人工复核确认：{_status_label(decision.status.value)}。请前往【04 审查底稿留痕】查看全案底稿与导出包。")
             except Exception as exc:
                 error_text = str(exc)
                 if error_text == "BLOCKING_CANDIDATE_REQUIRES_DISPUTED":
@@ -1222,8 +2150,11 @@ def review_page(result) -> None:
 
 
 def audit_page(result) -> None:
-    render_case_masthead(result.claim.case_id, status="复核已完成" if st.session_state.get("decision") else "待人工复核", data_classification="实战评测" if result.claim.case_id == "GOLD_CASE_001" else "演示案件", review_stage="审查结论")
-    st.subheader("全案审计留痕日志（电子证据链完整性）")
+    status_label = "✓ 复核已完成" if st.session_state.get("decision") else "◌ 等待人工复核"
+    data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "演示案件"
+    render_case_masthead(result.claim.case_id, status=status_label, data_classification=data_label, review_stage="审查底稿与审计留痕")
+
+    render_section_heading("01 / AUDIT TRAIL", "全案审计留痕日志", "电子证据链完整性与不可篡改记录")
 
     step_map = {
         "claim_extraction": "起诉书事实主张提取",
@@ -1245,7 +2176,7 @@ def audit_page(result) -> None:
             "序号": idx,
             "审查阶段": step_map.get(event.step, event.step),
             "调用工具": tool_map.get(event.tool, event.tool),
-            "执行状态": "成功完成" if event.status == "success" else "异常中断",
+            "执行状态": "✓ 成功完成" if event.status == "success" else "! 异常中断",
             "阶段耗时": f"{event.duration_ms} 毫秒",
             "模型引擎": event.model or "本地规则引擎",
             "Prompt Tokens": event.input_tokens or "-",
@@ -1258,27 +2189,28 @@ def audit_page(result) -> None:
     report = st.session_state.get("report")
     decision = st.session_state.get("decision")
     if not report or not decision:
-        st.info("完成涉案主张人工复核后可查看和导出复核底稿。")
+        st.info("完成涉案主张人工复核后可查看和导出全案复核底稿。")
         return
+
+    render_section_heading("02 / MEMO", "当前主张复核认定结果", "经办人员人工签署意见与事实覆盖")
     render_stat_strip([
-        ("人工复核状态", _status_label(decision.status.value), "STATUS"),
-        ("资金证据覆盖", f"¥{decision.covered_amount:,.2f}", "VERIFIED"),
-        ("未覆盖金额", f"¥{decision.uncovered_amount:,.2f}", "GAP"),
-        ("复核版本", f"v{decision.version}", "REVIEW MEMO"),
+        ("人工复核状态", _status_label(decision.status.value), "经办人复核认定"),
+        ("资金证据覆盖", f"¥{decision.covered_amount:,.2f}", "银行流水证实"),
+        ("未覆盖差额", f"¥{decision.uncovered_amount:,.2f}", "尚待查明差额"),
+        ("复核版本", f"v{decision.version}", "不可篡改底稿编号"),
     ])
-    st.markdown('<div class="section-kicker">人工复核确认结果</div>', unsafe_allow_html=True)
-    render_review_summary("资金证据核验结果", f"当前材料中，已人工纳入流水 {len(decision.included_transaction_ids)} 笔，共计人民币 ¥{decision.covered_amount:,.2f}；尚未覆盖 ¥{decision.uncovered_amount:,.2f}。复核人：{decision.reviewer or '未填写'}。")
-    st.markdown('<div class="legal-notice">' + report["disclaimer"] + '</div>', unsafe_allow_html=True)
-    topo_mermaid = report.get("fund_flow_topology")
-    if topo_mermaid:
-        st.markdown('<div class="section-kicker">重点资金流向</div>', unsafe_allow_html=True)
-        st.subheader("重点关联资金流")
-        _render_mermaid(topo_mermaid, height=330)
+    render_review_summary("资金证据核验结论", f"当前材料中，已人工纳入流水 {len(decision.included_transaction_ids)} 笔，共计人民币 ¥{decision.covered_amount:,.2f}；尚未覆盖 ¥{decision.uncovered_amount:,.2f}。复核人：{decision.reviewer or '未填写'}。")
+    st.markdown('<div class="legal-notice"><strong>法律效力提示：</strong>' + report["disclaimer"] + '</div>', unsafe_allow_html=True)
+    from legal_funds_agent.services.topology_service import build_fund_flow_topology
+    claims_for_topo = result.claims if getattr(result, "claims", None) else [result.claim]
+    audit_topo = build_fund_flow_topology(claims_for_topo, result.transactions, decision)
+    if audit_topo.nodes and audit_topo.edges:
+        render_section_heading("02.1 / TOPOLOGY", "重点关联资金流向", "采纳流水之拓扑关联")
+        _render_fund_flow(audit_topo, height=430, key="fund_flow_audit")
     json_text = report_to_json(report)
     csv_text = report_to_csv(report)
     html_text = report_to_html(report)
 
-    st.divider()
     from legal_funds_agent.services.case_report_service import build_case_master_report, case_report_to_html
     claims_list = result.claims if getattr(result, "claims", None) else [result.claim]
     conflict_matrix = build_evidence_conflict_matrix(result.transactions, _supplementary_documents(result))
@@ -1303,20 +2235,18 @@ def audit_page(result) -> None:
     ref_amt = master_summary.get("total_refund_amount", 0.0)
     net_amt = master_summary.get("net_claimed_amount", master_summary.get("total_claimed_amount", 0.0))
 
-    st.markdown('<div class="section-kicker">全案资金核验底稿</div>', unsafe_allow_html=True)
-    st.subheader("全案资金证据核验底稿")
-
+    render_section_heading("03 / MASTER MEMO", "全案资金证据核验底稿", "起诉主张、全案流水与事实交叉比对汇总")
     render_stat_strip([
-        ("指控涉案总额", f"¥{master_summary.get('total_claimed_amount', 0.0):,.2f}", "CLAIM"),
-        ("疑似转回流水", f"¥{ref_amt:,.2f}", "待核验性质"),
-        ("未返还参考", f"¥{net_amt:,.2f}", "数学差额"),
-        ("已确证覆盖", f"¥{master_summary.get('total_covered_amount', 0.0):,.2f}", "VERIFIED"),
+        ("指控涉案总额", f"¥{master_summary.get('total_claimed_amount', 0.0):,.2f}", "起诉书指控事实"),
+        ("疑似转回流水", f"¥{ref_amt:,.2f}", "案发前转回待查"),
+        ("未返还参考", f"¥{net_amt:,.2f}", "数学差额参考"),
+        ("已确证覆盖", f"¥{master_summary.get('total_covered_amount', 0.0):,.2f}", "银行流水穿透"),
     ])
 
     if ref_amt > 0:
         st.info(f"【疑似转回流水核对】按账户关系和唯一交易事件识别到 {len(identify_refund_transactions(claims_list, result.transactions.values()))} 笔、¥{ref_amt:,.2f} 元可能转入被害人账户；摘要不能单独证明返还性质或法定冲减效果，¥{net_amt:,.2f} 仅为参考值。")
 
-    st.caption(f"【审查结果数据完整性 (SHA-256)】：`{master_rep['data_integrity_sha256']}`")
+    st.caption(f"【审查结果数据完整性指纹 (SHA-256)】：`{master_rep['data_integrity_sha256']}`")
 
     with st.expander("查看补充调查与原始材料回查清单", expanded=True):
         st.caption("每项建议都保留关联流水或主张的原始定位；系统不改写原始 Word/Excel，只提供回查入口和执行记录。")
@@ -1332,14 +2262,21 @@ def audit_page(result) -> None:
         _save_investigation_items(st.session_state.get("repository_path"), result.claim.case_id, checklist)
         master_rep["investigation_checklist"] = checklist
         pending_count = sum(item.get("status") != "已核查" for item in checklist)
-        st.markdown(f'<div class="review-summary"><div class="section-number">FOLLOW-UP</div><strong>待核查建议</strong><div class="stat-value">{pending_count:02d}</div></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="review-summary">'
+            f'<div class="section-kicker">FOLLOW-UP · 重点回查</div>'
+            f'<strong>待核查补充侦查建议项</strong>'
+            f'<div class="stat-value">{pending_count:02d} 项</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
     master_html = case_report_to_html(master_rep)
     master_json = case_report_to_json(master_rep)
     checklist_json = json.dumps(checklist, ensure_ascii=False, indent=2)
     checklist_csv = _checklist_csv(checklist)
 
-    st.markdown("#### 复核底稿与数据导出")
+    render_section_heading("04 / EXPORT", "复核底稿与数据溯源包导出", "HTML / PDF / JSON / CSV 留痕归档")
     st.caption("底稿包含重点资金流向、疑似转回流水、证据冲突焦点、原始行号和回查清单；不修改原始 Word/Excel，打开 HTML 后可打印或保存为 PDF。")
 
     col_btn1, col_btn2 = st.columns([1.3, 1])
@@ -1375,33 +2312,58 @@ if st.session_state.get("result") is None:
     if restored_case_id and database_path.exists():
         _restore_case_into_session(database_path, restored_case_id)
 
-st.sidebar.markdown("### 资金链证审")
-st.sidebar.caption("EVIDENCE REVIEW · V0.2")
-with st.sidebar.expander("设置", expanded=False):
-    provider_name = st.selectbox("模型服务", ["mock", "deepseek"], format_func=lambda value: "本地 Mock（推荐）" if value == "mock" else "DeepSeek API", help="Mock 不联网；DeepSeek 只负责提取付款事实主张，金额计算和审查状态始终由确定性代码完成。")
-page = st.sidebar.radio("工作区", ["案件审查概览", "证据与资金流水", "资金证据核验", "审查结论与留痕"], label_visibility="collapsed")
+st.sidebar.markdown("""
+<div class="sidebar-brand-block">
+  <div><span class="sidebar-brand-badge"></span><span class="sidebar-brand-name">资金链证审</span></div>
+  <div class="sidebar-brand-sub">EVIDENCE REVIEW · V0.2</div>
+</div>
+""", unsafe_allow_html=True)
+
+with st.sidebar.expander("模型与规则配置", expanded=False):
+    provider_name = st.selectbox(
+        "模型服务",
+        ["mock", "deepseek"],
+        format_func=lambda value: "本地 Mock（推荐演示）" if value == "mock" else "DeepSeek API",
+        help="Mock 不联网；DeepSeek 负责事实主张提取，金额穿透与审查状态始终由确定性规则完成。"
+    )
+
+PAGES = [
+    "01  案件审查概览",
+    "02  涉案资金流水",
+    "03  资金证据核验",
+    "04  审查底稿留痕",
+]
+page_selection = st.sidebar.radio("工作区导航", PAGES, label_visibility="collapsed")
 st.sidebar.divider()
+
 result = st.session_state.get("result")
-st.sidebar.write("任务状态")
-st.sidebar.caption("等待材料" if result is None else "等待人工复核" if "decision" not in st.session_state else "复核已完成")
+st.sidebar.markdown('<div class="section-kicker" style="margin-top:8px;">案件任务状态</div>', unsafe_allow_html=True)
+if result is None:
+    st.sidebar.markdown('<span class="accessible-status status-insufficient"><span class="status-symbol">—</span> 等待载入材料</span>', unsafe_allow_html=True)
+elif "decision" in st.session_state:
+    st.sidebar.markdown('<span class="accessible-status status-ok"><span class="status-symbol">✓</span> 复核已签署完成</span>', unsafe_allow_html=True)
+    st.sidebar.caption(f"案件：{result.claim.case_id} (v{st.session_state.decision.version})")
+else:
+    st.sidebar.markdown('<span class="accessible-status status-pending"><span class="status-symbol">◌</span> 等待人工复核</span>', unsafe_allow_html=True)
+    st.sidebar.caption(f"案件：{result.claim.case_id}")
 
 if result is not None:
     claim_events = [e for e in getattr(result, "audit_events", []) if getattr(e, "step", None) == "claim_extraction"]
     if claim_events and getattr(claim_events[-1], "input_tokens", None) is not None and claim_events[-1].input_tokens > 0:
         ce = claim_events[-1]
-        with st.sidebar.expander("技术诊断", expanded=False):
-            st.write(f"响应耗时 · {ce.latency_ms or 0} ms")
+        with st.sidebar.expander("大模型诊断指标", expanded=False):
+            st.write(f"模型耗时 · {ce.latency_ms or 0} ms")
             st.write(f"Prompt Tokens · {ce.input_tokens}")
             st.write(f"Output Tokens · {ce.output_tokens or 0}")
 
-if page == "案件审查概览":
+if page_selection.startswith("01"):
     case_page()
 elif result is None:
-    _header(page, "请先创建案件并处理材料")
-    st.warning("当前没有可用审查任务。请前往“案件审查概览”。")
-elif page == "证据与资金流水":
+    render_section_heading("PAGE / EMPTY", "请先加载案卷材料", "当前工作区需要有效案件数据")
+    st.warning("— 当前没有可用审查任务。请前往【01  案件审查概览】载入案卷或上传材料。")
+elif page_selection.startswith("02"):
     transactions_page(result)
-elif page == "资金证据核验":
+elif page_selection.startswith("03"):
     review_page(result)
 else:
     audit_page(result)

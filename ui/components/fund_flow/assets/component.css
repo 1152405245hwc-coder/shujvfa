@@ -1,0 +1,125 @@
+:host {
+  display: block;
+}
+
+.ff-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #fdfdfb;
+  font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+}
+
+.ff-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.ff-toolbar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  display: flex;
+  gap: 6px;
+}
+
+.ff-toolbar button {
+  background: #ffffff;
+  border: 1px solid #d8dee4;
+  color: #37444f;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.ff-toolbar button:hover {
+  background: #f2f5f7;
+  border-color: #aeb8c0;
+}
+
+.ff-legend {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  z-index: 10;
+  display: flex;
+  gap: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e2e7ea;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #55636e;
+}
+
+.ff-legend .ff-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ff-legend .ff-line {
+  display: inline-block;
+  width: 22px;
+  height: 0;
+  border-top: 3px solid #1f3a5f;
+}
+
+.ff-legend .ff-line.dashed {
+  border-top-style: dashed;
+  border-top-color: #b07d2b;
+  border-top-width: 2px;
+}
+
+.ff-legend .ff-line.refund {
+  border-top-color: #7a6c3f;
+  border-top-width: 3px;
+}
+
+.ff-legend .ff-line.excluded {
+  border-top-color: #b9c2c9;
+  border-top-width: 1px;
+}
+
+.ff-tooltip {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  background: #10222f;
+  color: #f2f5f7;
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 8px 11px;
+  max-width: 300px;
+  display: none;
+  box-shadow: 0 2px 8px rgba(16, 34, 47, 0.28);
+}
+
+.ff-tooltip .ff-tt-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #ffffff;
+}
+
+.ff-tooltip .ff-tt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.ff-tooltip .ff-tt-row span:first-child {
+  color: #9fb2c0;
+}
+
+.ff-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7d8b96;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}

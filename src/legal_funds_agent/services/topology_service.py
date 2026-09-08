@@ -64,6 +64,49 @@ class TopologyGraph:
         return sum((edge.amount for edge in self.edges if edge.disposition == "INCLUDED"), Decimal("0"))
 
 
+@dataclass
+class AggregatedEdge:
+    """Edges merged by (source_id, target_id, disposition) for presentation."""
+
+    source_id: str
+    target_id: str
+    disposition: str
+    edges: list[TopologyEdge] = field(default_factory=list)
+
+    @property
+    def count(self) -> int:
+        return len(self.edges)
+
+    @property
+    def total_amount(self) -> Decimal:
+        return sum((e.amount for e in self.edges), Decimal("0"))
+
+    @property
+    def date_min(self) -> str:
+        return min(e.date_str for e in self.edges)
+
+    @property
+    def date_max(self) -> str:
+        return max(e.date_str for e in self.edges)
+
+    @property
+    def reason(self) -> str | None:
+        return next((e.reason for e in self.edges if e.reason), None)
+
+
+def aggregate_topology_edges(graph: TopologyGraph) -> list[AggregatedEdge]:
+    """Group graph edges by (source, target, disposition), preserving first-seen order."""
+    grouped: dict[tuple[str, str, str], AggregatedEdge] = {}
+    for edge in graph.edges:
+        key = (edge.source_id, edge.target_id, edge.disposition)
+        agg = grouped.get(key)
+        if agg is None:
+            agg = AggregatedEdge(edge.source_id, edge.target_id, edge.disposition)
+            grouped[key] = agg
+        agg.edges.append(edge)
+    return list(grouped.values())
+
+
 def build_fund_flow_topology(
     claims: list[Claim] | Claim,
     transactions: dict[str, Transaction],
@@ -231,15 +274,12 @@ def generate_mermaid_graph(graph: TopologyGraph, *, compact: bool = True) -> str
         "REFUND": "疑似转回流水",
     }
 
-    grouped_edges: dict[tuple[str, str, str], list[TopologyEdge]] = {}
-    for edge in graph.edges:
-        key = (edge.source_id, edge.target_id, edge.disposition)
-        grouped_edges.setdefault(key, []).append(edge)
-
-    for (source_id, target_id, disposition), edge_group in grouped_edges.items():
+    for agg in aggregate_topology_edges(graph):
+        source_id, target_id, disposition = agg.source_id, agg.target_id, agg.disposition
+        edge_group = agg.edges
         status_text = disp_labels.get(disposition, disposition)
-        total_group_amount = sum(e.amount for e in edge_group)
-        count = len(edge_group)
+        total_group_amount = agg.total_amount
+        count = agg.count
         if compact:
             edge_label = f"{count}笔 · ¥{total_group_amount:,.2f} · {status_text}"
         elif count == 1:
