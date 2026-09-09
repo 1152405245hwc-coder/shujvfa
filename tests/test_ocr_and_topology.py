@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import io
 import unittest
 from decimal import Decimal
@@ -31,6 +32,8 @@ from legal_funds_agent.services.topology_service import (
 
 class OCRAndTopologyTest(unittest.TestCase):
     def test_image_ocr_text_extraction(self):
+        if importlib.util.find_spec("rapidocr_onnxruntime") is None:
+            self.skipTest("rapidocr_onnxruntime 未安装（可选依赖，不影响主链）")
         img = Image.new("RGB", (450, 120), color=(255, 255, 255))
         d = ImageDraw.Draw(img)
         d.text((15, 30), "2026-03-15 50000.00 CNY TRANSFER", fill=(0, 0, 0))

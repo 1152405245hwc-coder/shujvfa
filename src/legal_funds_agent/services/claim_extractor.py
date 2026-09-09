@@ -15,6 +15,8 @@ def extract_claims(text: str, *, case_id: str, evidence_id: str, provider: LLMPr
         start_offset = text.find(source_text) if source_text else -1
         if start_offset < 0:
             raise ValueError("claim source_text is not present in the evidence text")
+        if text.find(source_text, start_offset + 1) >= 0:
+            raise ValueError("claim source_text matches multiple locations in the evidence text and cannot be uniquely located")
         end_offset = start_offset + len(source_text)
         locator_id = f"LOC-{evidence_id}-{index}"
         locator = SourceLocator(

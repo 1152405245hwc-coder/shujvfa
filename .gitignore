@@ -11,3 +11,4 @@ output/*
 *.db
 *.egg-info/
 .streamlit_*.log
+streamlit*.log
