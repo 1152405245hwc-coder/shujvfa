@@ -32,6 +32,13 @@ RISK_WEIGHTS = {
     "STATEMENT_RECIPIENT_CONFLICT": 70,
 }
 
+# Recall heuristic only: tolerates minor posting-date vs value-date drift when
+# surfacing candidate transactions. It is not a legal determination of the
+# transaction date; final correspondence is always confirmed by a human
+# against the original bank records. Override per call if a case needs a
+# different window.
+DEFAULT_DATE_WINDOW_DAYS = 3
+
 
 def candidate_risk_level(candidate: CandidateMatch) -> str:
     """Return a deterministic review priority for presentation only."""
@@ -60,7 +67,7 @@ def sort_candidates_for_review(
     )
 
 
-def match_claim_transactions(claim: Claim, transactions: list[Transaction], date_window_days: int = 3) -> list[CandidateMatch]:
+def match_claim_transactions(claim: Claim, transactions: list[Transaction], date_window_days: int = DEFAULT_DATE_WINDOW_DAYS) -> list[CandidateMatch]:
     candidates: list[CandidateMatch] = []
     seen_events: dict[tuple[str, str, str, str, str], set[str | None]] = {}
     start, end = claim.time_start, claim.time_end
