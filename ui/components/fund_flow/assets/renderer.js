@@ -9,8 +9,8 @@ const FF_COLORS = {
   label: '#55636e',
 };
 
-const FF_NODE_W = 210;
-const FF_NODE_H = 72;
+const FF_NODE_W = 240;
+const FF_NODE_H = 84;
 
 function ffPartition(role) {
   if (role === 'victim') return 0;
@@ -18,8 +18,15 @@ function ffPartition(role) {
   return 2;
 }
 
+const FF_ROLE_TEXT = {
+  victim: '被害人 / 资金来源',
+  suspect: '涉案一级账户',
+  third_party_disputed: '第三方争议账户',
+  downstream: '后续流向账户',
+};
+
 function ffNodeDisplay(d) {
-  const marker = d.role === 'secondary_account' ? '! ' : '';
+  const marker = d.display_role === 'third_party_disputed' ? '! ' : '';
   const lines = [marker + d.name];
   if (d.masked_account) lines.push(d.masked_account);
   if (d.role === 'victim') {
@@ -42,6 +49,10 @@ function ffRunLayout(cy, onDone, marker) {
   };
   if (typeof ELK !== 'undefined') {
     try {
+      // Note: elkjs 0.11 does not honor partitioning constraints (verified
+      // against elk.bundled.js directly), so ELK is used for its crossing
+      // minimization / vertical ordering only; ffSnapColumns then enforces
+      // the semantic columns (victim / suspect / downstream) deterministically.
       const layout = cy.layout({
         name: 'elk',
         animate: false,
@@ -49,7 +60,6 @@ function ffRunLayout(cy, onDone, marker) {
         elk: {
           'elk.algorithm': 'layered',
           'elk.direction': 'RIGHT',
-          'elk.partitioning.activate': true,
           'elk.separateConnectedComponents': false,
           'elk.spacing.nodeNode': 40,
           'elk.layered.spacing.nodeNodeBetweenLayers': 130,
@@ -57,11 +67,11 @@ function ffRunLayout(cy, onDone, marker) {
           'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
           'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
         },
-        nodeLayoutOptions: (node) => ({
-          'partition': String(node.data('partition')),
-        }),
       });
-      layout.one('layoutstop', () => finish('elk'));
+      layout.one('layoutstop', () => {
+        ffSnapColumns(cy);
+        finish('elk+snap');
+      });
       const promise = layout.promiseOn ? layout.promiseOn('layoutstop') : null;
       if (promise && typeof promise.catch === 'function') {
         promise.catch(() => {
@@ -87,6 +97,21 @@ function ffRunLayout(cy, onDone, marker) {
   finish('preset-no-elk');
 }
 
+function ffSnapColumns(cy) {
+  // Enforce the semantic columns (0 = victim / 1 = suspect / 2 = downstream)
+  // while keeping ELK's vertical ordering within each column.
+  const cols = [[], [], []];
+  cy.nodes('[kind = "account"]').forEach((n) => cols[n.data('partition')].push(n));
+  const gapX = FF_NODE_W + 150;
+  const gapY = FF_NODE_H + 48;
+  cols.forEach((col, ci) => {
+    col.sort((a, b) => a.position('y') - b.position('y'));
+    col.forEach((n, i) => {
+      n.position({ x: ci * gapX, y: i * gapY });
+    });
+  });
+}
+
 function ffPresetLayout(cy) {
   const columns = [[], [], []];
   cy.nodes().forEach((n) => {
@@ -106,10 +131,11 @@ function ffPresetLayout(cy) {
   });
 }
 
-function ffAccentColor(role) {
-  if (role === 'victim') return FF_COLORS.navy;
-  if (role === 'primary_suspect') return FF_COLORS.ink;
-  return FF_COLORS.gold;
+function ffAccentColor(displayRole) {
+  if (displayRole === 'victim') return FF_COLORS.navy;
+  if (displayRole === 'suspect') return FF_COLORS.ink;
+  if (displayRole === 'third_party_disputed') return FF_COLORS.gold;
+  return '#9aa7b0';
 }
 
 function ffSyncAccent(node) {
@@ -125,7 +151,7 @@ function ffAddAccents(cy) {
     const id = n.id() + '__rule';
     accents.push({
       group: 'nodes',
-      data: { id, kind: 'rule', color: ffAccentColor(n.data('role')) },
+      data: { id, kind: 'rule', color: ffAccentColor(n.data('display_role')) },
       selectable: false,
       grabbable: false,
     });
@@ -151,6 +177,38 @@ function ffRouteRefunds(cy) {
   });
 }
 
+function ffFitWhenReady(cy, container) {
+  // Streamlit can run the component JS before the shadow host has its final
+  // size (tab fade-in, expander reveal, sidebar reflow). fit() on a zero-size
+  // container is silently ignored, leaving zoom=1/pan=0 with all content
+  // stacked at the origin. Retry until the container has a real size.
+  let done = false;
+  const tryFit = () => {
+    if (done) return true;
+    if (container.clientWidth < 10 || container.clientHeight < 10) return false;
+    cy.resize();
+    cy.fit(undefined, 24);
+    // readability floor: on dense graphs fit() can shrink text below a usable
+    // size; prefer a readable zoom centred on the fund source over showing
+    // everything at once.
+    if (cy.zoom() < 0.5) {
+      cy.zoom(0.5);
+      const victim = cy.nodes('[display_role = "victim"]').first();
+      if (victim && victim.length) cy.center(victim); else cy.center();
+    }
+    done = true;
+    return true;
+  };
+  if (tryFit()) return;
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(() => { if (tryFit()) ro.disconnect(); });
+    ro.observe(container);
+    setTimeout(() => { ro.disconnect(); tryFit(); }, 5000);
+  } else {
+    setTimeout(tryFit, 300);
+  }
+}
+
 function ffBuildTooltip(tip, title, rows) {
   let html = '<div class="ff-tt-title">' + title + '</div>';
   rows.forEach(([k, v]) => {
@@ -169,11 +227,16 @@ export default function (component) {
     parentElement.appendChild(root);
   }
 
+  // A previous render may have left a live cytoscape instance on this root;
+  // destroy it before wiping the DOM so its listeners don't leak.
+  if (root.__cy && !root.__cy.destroyed()) root.__cy.destroy();
+
   root.innerHTML =
     '<div class="ff-canvas"></div>' +
     '<div class="ff-toolbar">' +
     '<button type="button" data-ff="fit">适配视图</button>' +
     '<button type="button" data-ff="reset">重置缩放</button>' +
+    '<button type="button" data-ff="png">导出高清图</button>' +
     '</div>' +
     '<div class="ff-legend">' +
     '<span class="ff-key"><i class="ff-line"></i>已纳入</span>' +
@@ -210,6 +273,7 @@ export default function (component) {
         id: n.id,
         kind: 'account',
         role: n.role,
+        display_role: n.display_role || 'downstream',
         partition: ffPartition(n.role),
         name: n.name,
         masked_account: n.masked_account || '',
@@ -253,6 +317,7 @@ export default function (component) {
         width: e.width,
         is_return: !!e.is_return,
         transaction_ids: e.transaction_ids || [],
+        source_refs: e.source_refs || [],
         taxiTurn: 60,
       },
     });
@@ -277,7 +342,7 @@ export default function (component) {
           label: 'data(display)',
           'text-wrap': 'wrap',
           'text-max-width': String(FF_NODE_W - 20) + 'px',
-          'font-size': 11,
+          'font-size': 14,
           'line-height': 1.45,
           color: FF_COLORS.ink,
           'text-valign': 'center',
@@ -286,7 +351,7 @@ export default function (component) {
         },
       },
       {
-        selector: 'node[kind = "account"][role = "secondary_account"]',
+        selector: 'node[kind = "account"][display_role = "third_party_disputed"]',
         style: { 'border-color': '#e3d3ae' },
       },
       {
@@ -311,7 +376,7 @@ export default function (component) {
           'arrow-scale': 0.9,
           'curve-style': 'bezier',
           label: 'data(amount_label)',
-          'font-size': 10,
+          'font-size': 12,
           color: FF_COLORS.label,
           'text-background-color': '#fdfdfb',
           'text-background-opacity': 1,
@@ -372,23 +437,47 @@ export default function (component) {
 
   // Paint the deterministic column layout immediately so the graph is visible
   // on the first frame; ELK then refines positions asynchronously.
-  if (typeof window !== 'undefined' && window.__FF_DEBUG) window.__cy = cy;
   ffPresetLayout(cy);
   ffRunLayout(cy, () => {
-    cy.resize();
     ffAddAccents(cy);
     ffRouteRefunds(cy);
-    cy.fit(undefined, 24);
+    ffFitWhenReady(cy, canvas);
   }, (mode) => {
     root.dataset.ffLayout = mode;
   });
 
   cy.nodes('[kind = "account"]').on('position', (evt) => ffSyncAccent(evt.target));
 
+  root.__cy = cy;
+
+  // Cytoscape caches the container's client rect and invalidates it via
+  // scroll listeners on the container's parentNode chain — but that chain
+  // stops at this component's shadow root, and Streamlit scrolls a page-level
+  // div outside it. After page scroll the cached rect goes stale and pointer
+  // hits land offset by the scroll delta. Scroll events do not bubble, so
+  // listen on the whole document in the capture phase.
+  let ffScrollRaf = 0;
+  const onDocScroll = () => {
+    if (ffScrollRaf) return;
+    ffScrollRaf = requestAnimationFrame(() => {
+      ffScrollRaf = 0;
+      if (!cy.destroyed()) cy.resize();
+    });
+  };
+  document.addEventListener('scroll', onDocScroll, { capture: true, passive: true });
+  cy.on('destroy', () => document.removeEventListener('scroll', onDocScroll, { capture: true }));
+
   root.querySelector('[data-ff="fit"]').addEventListener('click', () => cy.fit(undefined, 24));
   root.querySelector('[data-ff="reset"]').addEventListener('click', () => {
     cy.zoom(1);
     cy.center();
+  });
+  root.querySelector('[data-ff="png"]').addEventListener('click', () => {
+    const uri = cy.png({ full: true, scale: 3, bg: '#fdfdfb', maxWidth: 8000, maxHeight: 8000 });
+    const a = document.createElement('a');
+    a.href = uri;
+    a.download = '资金流向图.png';
+    a.click();
   });
 
   function moveTip(evt) {
@@ -403,7 +492,7 @@ export default function (component) {
 
   cy.on('mouseover', 'node[kind = "account"]', (evt) => {
     const d = evt.target.data();
-    const roleText = { victim: '被害人', primary_suspect: '涉案一级账户', secondary_account: '关联第三方账户' }[d.role] || '其他账户';
+    const roleText = FF_ROLE_TEXT[d.display_role] || '其他账户';
     ffBuildTooltip(tip, d.name + (d.masked_account ? ' · ' + d.masked_account : ''), [
       ['账户性质', roleText],
       ['累计流入', d.total_in_full],
@@ -436,6 +525,7 @@ export default function (component) {
       id: d.id,
       name: d.name,
       role: d.role,
+      display_role: d.display_role,
       masked_account: d.masked_account,
       total_in_full: d.total_in_full,
       total_out_full: d.total_out_full,
@@ -453,6 +543,7 @@ export default function (component) {
       date_min: d.date_min,
       date_max: d.date_max,
       transaction_ids: d.transaction_ids,
+      source_refs: d.source_refs || [],
     });
   });
   cy.on('tap', (evt) => {

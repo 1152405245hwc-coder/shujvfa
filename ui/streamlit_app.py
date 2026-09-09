@@ -915,7 +915,7 @@ def _supplementary_documents(result) -> list[dict[str, str]]:
     return restored
 
 
-def _render_fund_flow(graph, *, height: int = 430, key: str | None = None) -> None:
+def _render_fund_flow(graph, *, height: int = 430, key: str | None = None, transactions=None, disputed_names=None) -> None:
     """Render the fund flow topology with the Cytoscape.js + ELK component."""
     if not graph.nodes or not graph.edges:
         st.markdown(
@@ -927,7 +927,7 @@ def _render_fund_flow(graph, *, height: int = 430, key: str | None = None) -> No
 
     from components.fund_flow import render_fund_flow, topology_to_payload
 
-    payload = topology_to_payload(graph)
+    payload = topology_to_payload(graph, transactions=transactions, disputed_names=disputed_names)
     state = render_fund_flow(payload, height=height, key=key)
 
     selection = None
@@ -942,9 +942,10 @@ def _render_fund_flow(graph, *, height: int = 430, key: str | None = None) -> No
     if selection.get("type") == "node":
         role_cn = {
             "victim": "被害人 / 资金来源",
-            "primary_suspect": "涉案一级账户",
-            "secondary_account": "关联第三方账户",
-        }.get(selection.get("role"), "其他账户")
+            "suspect": "涉案一级账户",
+            "third_party_disputed": "! 第三方争议账户",
+            "downstream": "后续流向账户",
+        }.get(selection.get("display_role"), "其他账户")
         _evidence_card(
             f"账户 · {selection.get('name', '-')}",
             [
@@ -955,19 +956,28 @@ def _render_fund_flow(graph, *, height: int = 430, key: str | None = None) -> No
             ],
         )
     elif selection.get("type") == "edge":
-        tx_ids = selection.get("transaction_ids") or []
         date_min, date_max = selection.get("date_min", ""), selection.get("date_max", "")
         dates = date_min if date_min == date_max else f"{date_min} ~ {date_max}"
         reason = selection.get("reason") or ""
+        source_refs = selection.get("source_refs") or []
+        items = [
+            ("交易笔数", f"{selection.get('count', 0)} 笔"),
+            ("处置状态", selection.get("disposition_label", "-")),
+            ("日期范围", dates or "-"),
+            ("说明", REASON_TO_CN.get(reason, reason) or "-"),
+        ]
+        for idx, ref in enumerate(source_refs[:8], 1):
+            locator_parts = [p for p in (ref.get("evidence_id"), ref.get("account_id")) if p]
+            locator = " / ".join(locator_parts)
+            row = ref.get("source_row")
+            if row:
+                locator = f"{locator} · Row {row}" if locator else f"Row {row}"
+            items.append((f"来源记录 {idx:02d}", f"{ref.get('transaction_id', '-')}" + (f" · {locator}" if locator else "")))
+        if len(source_refs) > 8:
+            items.append(("…", f"另有 {len(source_refs) - 8} 笔来源记录"))
         _evidence_card(
             f"资金往来 · {selection.get('amount_full', '-')}",
-            [
-                ("交易笔数", f"{selection.get('count', 0)} 笔"),
-                ("处置状态", selection.get("disposition_label", "-")),
-                ("日期范围", dates or "-"),
-                ("说明", REASON_TO_CN.get(reason, reason) or "-"),
-                ("来源流水号", "、".join(tx_ids[:8]) + (" …" if len(tx_ids) > 8 else "") or "-"),
-            ],
+            items,
         )
 
 
@@ -1732,13 +1742,50 @@ def transactions_page(result) -> None:
     candidate_ids = {candidate.transaction_id for candidate in all_candidates}
     refund_txs = identify_refund_transactions(claims, result.transactions.values())
     refund_ids = {tx.id for tx in refund_txs}
+
+    # Core evidence graph: victim payments (claim candidates) + refunds + the
+    # main one-hop downstream flows out of accounts that received涉案资金.
+    # This keeps the default graph on the evidence story instead of swinging
+    # between "candidates only" and "all 100+ rows".
     focus_ids = candidate_ids | refund_ids
+    receiving_accounts = {
+        tx.payee_account_id
+        for tx in result.transactions.values()
+        if tx.id in candidate_ids and tx.payee_account_id
+    }
+    seen_keys = {
+        transaction_canonical_key(tx)
+        for tx in result.transactions.values()
+        if tx.id in focus_ids
+    }
+    downstream_ids: list[str] = []
+    for tx in sorted(
+        (tx for tx in result.transactions.values() if tx.payer_account_id in receiving_accounts),
+        key=lambda tx: tx.amount,
+        reverse=True,
+    ):
+        key = transaction_canonical_key(tx)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        downstream_ids.append(tx.id)
+        if len(downstream_ids) >= 10:
+            break
+    focus_ids = focus_ids | set(downstream_ids)
     focus_transactions = {
         tx_id: tx for tx_id, tx in result.transactions.items() if tx_id in focus_ids
     }
     focus_transactions = focus_transactions or result.transactions
     topo = build_fund_flow_topology(claims, focus_transactions, decision)
     all_topo = build_fund_flow_topology(claims, result.transactions, decision)
+
+    disputed_names = {
+        tx.payee_name
+        for candidate in all_candidates
+        if "THIRD_PARTY_RECIPIENT" in candidate.risk_codes
+        for tx in [result.transactions.get(candidate.transaction_id)]
+        if tx and tx.payee_name
+    }
 
     third_party_tx_ids = {
         candidate.transaction_id for candidate in all_candidates
@@ -1827,10 +1874,10 @@ def transactions_page(result) -> None:
         st.caption(f"全案总计导入 {len(result.transactions)} 笔原始银行记录；当前筛选显示 {len(filtered_rows)} 笔。前两类台账按 canonical 唯一事件展示。")
 
     with tab_graph:
-        render_section_heading("03 / TOPOLOGY", "涉案账户资金关系图", f"重点关联资金：{len(topo.nodes)} 个账户节点、{len(topo.edges)} 条唯一交易事件")
-        _render_fund_flow(topo, height=430, key="fund_flow_focus")
+        render_section_heading("03 / TOPOLOGY", "核心涉案资金流向图", f"从 {len(result.transactions)} 笔原始流水提取主要证据路径：{len(topo.nodes)} 个账户节点、{len(topo.edges)} 条唯一交易事件")
+        _render_fund_flow(topo, height=430, key="fund_flow_focus", transactions=result.transactions, disputed_names=disputed_names)
         with st.expander("查看全案资金流向图（全部账户与流水）", expanded=False):
-            _render_fund_flow(all_topo, height=560, key="fund_flow_all")
+            _render_fund_flow(all_topo, height=560, key="fund_flow_all", transactions=result.transactions, disputed_names=disputed_names)
 
 
 def review_page(result) -> None:
@@ -2205,8 +2252,16 @@ def audit_page(result) -> None:
     claims_for_topo = result.claims if getattr(result, "claims", None) else [result.claim]
     audit_topo = build_fund_flow_topology(claims_for_topo, result.transactions, decision)
     if audit_topo.nodes and audit_topo.edges:
+        audit_candidates = [c for cands in getattr(result, "candidates_by_claim", {}).values() for c in cands] or getattr(result, "candidates", [])
+        audit_disputed = {
+            tx.payee_name
+            for candidate in audit_candidates
+            if "THIRD_PARTY_RECIPIENT" in candidate.risk_codes
+            for tx in [result.transactions.get(candidate.transaction_id)]
+            if tx and tx.payee_name
+        }
         render_section_heading("02.1 / TOPOLOGY", "重点关联资金流向", "采纳流水之拓扑关联")
-        _render_fund_flow(audit_topo, height=430, key="fund_flow_audit")
+        _render_fund_flow(audit_topo, height=430, key="fund_flow_audit", transactions=result.transactions, disputed_names=audit_disputed)
     json_text = report_to_json(report)
     csv_text = report_to_csv(report)
     html_text = report_to_html(report)

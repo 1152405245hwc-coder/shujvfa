@@ -21,10 +21,17 @@ def _mask(account: str | None) -> str:
 
 
 def _clean_id(name: str) -> str:
-    """Generate safe Mermaid node ID."""
-    # Mermaid node identifiers are kept ASCII-only; Chinese names belong in
-    # labels, and non-ASCII IDs are rejected by some Mermaid renderers.
-    return "".join(c if c.isascii() and c.isalnum() else "_" for c in name).strip("_") or "node"
+    """Generate safe node ID component."""
+    # Node identifiers are kept ASCII-only (Mermaid rejects non-ASCII IDs).
+    # Chinese names contain no ASCII alphanumerics, so without a fallback they
+    # would all collapse to the same base and distinct people with no account
+    # number (e.g. multiple creditors) would merge into a single graph node.
+    base = "".join(c if c.isascii() and c.isalnum() else "_" for c in name).strip("_")
+    if not base:
+        import hashlib
+
+        base = "u" + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
+    return base
 
 
 @dataclass
