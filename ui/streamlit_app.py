@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import csv
+import hashlib
 import io
 import html
 import re
@@ -31,9 +32,12 @@ from legal_funds_agent.services.candidate_matcher import (
     sort_candidates_for_review,
 )
 from legal_funds_agent.services.case_report_service import case_report_to_json
-from legal_funds_agent.services.evidence_conflict_service import build_evidence_conflict_matrix
+from legal_funds_agent.services.evidence_conflict_service import (
+    build_evidence_conflict_matrix,
+    showcase_conflict_matrix,
+)
 from legal_funds_agent.services.report_service import build_report, report_to_csv, report_to_html, report_to_json
-from legal_funds_agent.parsers.file_parsers import extract_document_text, extract_transactions_csv
+from legal_funds_agent.parsers.file_parsers import extract_document_text, extract_transactions_csv_detailed
 from legal_funds_agent.services.review_engine import build_decision
 from legal_funds_agent.services.statement_extractor import StatementPaymentFact
 from legal_funds_agent.services.verification_engine import find_duplicate_transactions
@@ -78,6 +82,9 @@ st.markdown("""
 }
 
 /* Global resets & Typography */
+html {
+    font-size: 17.5px;
+}
 .stApp {
     background: var(--paper);
     color: var(--ink);
@@ -134,13 +141,13 @@ section.main > div {
     vertical-align: 2px;
 }
 .sidebar-brand-name {
-    font-size: 16px;
+    font-size: 17.5px;
     font-weight: 750;
     letter-spacing: 0.04em;
     color: var(--ink);
 }
 .sidebar-brand-sub {
-    font-size: 10px;
+    font-size: 12px;
     letter-spacing: 0.14em;
     color: var(--muted);
     text-transform: uppercase;
@@ -160,7 +167,7 @@ section.main > div {
     padding: 10px 14px;
     border-left: 2px solid transparent;
     border-radius: 0px !important;
-    font-size: 14px;
+    font-size: 17px;
     font-weight: 550;
     min-height: 44px;
     display: flex;
@@ -182,7 +189,7 @@ section.main > div {
 }
 [data-testid="stSidebar"] .stRadio div[data-testid="stMarkdownContainer"] p {
     margin: 0;
-    font-size: 13.5px;
+    font-size: 16.5px;
     letter-spacing: 0.02em;
 }
 
@@ -197,7 +204,7 @@ section.main > div {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    font-size: 12px;
+    font-size: 14.5px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--muted);
@@ -209,7 +216,7 @@ section.main > div {
     letter-spacing: 0.08em;
 }
 .masthead-status-badge {
-    font-size: 12px;
+    font-size: 14.5px;
     font-weight: 600;
     padding: 2px 8px;
     border-radius: 0px;
@@ -217,7 +224,7 @@ section.main > div {
     background: var(--surface);
 }
 .case-masthead h1 {
-    font-size: 32px;
+    font-size: 35px;
     line-height: 1.15;
     margin: 16px 0 6px;
     color: var(--ink);
@@ -225,7 +232,7 @@ section.main > div {
     letter-spacing: -0.02em;
 }
 .masthead-subtitle {
-    font-size: 16px;
+    font-size: 17.5px;
     font-weight: 500;
     margin: 0 0 12px;
     color: var(--navy);
@@ -236,7 +243,7 @@ section.main > div {
     align-items: center;
     gap: 8px;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: 15px;
     letter-spacing: 0.02em;
 }
 .masthead-meta .meta-dot {
@@ -266,7 +273,7 @@ section.main > div {
     border-right: 0;
 }
 .stat-label {
-    font-size: 11px;
+    font-size: 13.5px;
     letter-spacing: 0.08em;
     color: var(--muted);
     text-transform: uppercase;
@@ -274,7 +281,7 @@ section.main > div {
 }
 .stat-value {
     color: var(--ink);
-    font-size: 28px;
+    font-size: 31px;
     line-height: 1.15;
     font-weight: 650;
     margin: 10px 0 6px;
@@ -283,7 +290,7 @@ section.main > div {
 }
 .stat-note {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 14.5px;
 }
 
 /* Section Headings */
@@ -296,7 +303,7 @@ section.main > div {
     margin: 26px 0 16px;
 }
 .section-heading .section-kicker {
-    font-size: 11px;
+    font-size: 13.5px;
     letter-spacing: 0.1em;
     color: var(--gold);
     font-weight: 700;
@@ -304,17 +311,17 @@ section.main > div {
 }
 .section-heading strong {
     color: var(--ink);
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 700;
     letter-spacing: -0.01em;
 }
 .section-heading .heading-sub {
     color: var(--muted);
-    font-size: 13px;
+    font-size: 16px;
     margin-left: auto;
 }
 .section-kicker {
-    font-size: 11px;
+    font-size: 13.5px;
     letter-spacing: 0.1em;
     color: var(--gold);
     font-weight: 700;
@@ -327,7 +334,7 @@ section.main > div {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-size: 12.5px;
+    font-size: 15px;
     font-weight: 600;
     padding: 3px 8px;
     border-radius: 0px;
@@ -335,7 +342,7 @@ section.main > div {
 }
 .accessible-status .status-symbol {
     font-weight: 700;
-    font-size: 13px;
+    font-size: 16px;
 }
 .accessible-status.status-ok {
     color: var(--status-ok);
@@ -377,7 +384,7 @@ section.main > div {
     border-radius: 0;
 }
 .source-quote .source-kicker {
-    font-size: 11px;
+    font-size: 13.5px;
     letter-spacing: 0.08em;
     color: var(--muted);
     text-transform: uppercase;
@@ -386,14 +393,14 @@ section.main > div {
 }
 .source-quote blockquote {
     font-family: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", serif;
-    font-size: 15px;
+    font-size: 16.5px;
     line-height: 1.75;
     margin: 6px 0 8px;
     color: #212529;
 }
 .source-quote figcaption {
     color: var(--muted);
-    font-size: 11px;
+    font-size: 13.5px;
     font-family: Inter, monospace;
 }
 
@@ -412,7 +419,7 @@ section.main > div {
     display: flex;
     align-items: center;
     gap: 9px;
-    font-size: 13px;
+    font-size: 16px;
     font-weight: 600;
     color: var(--muted);
 }
@@ -423,7 +430,7 @@ section.main > div {
     width: 22px;
     height: 22px;
     border: 1px solid var(--line);
-    font-size: 11px;
+    font-size: 13.5px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     background: #fafaf8;
@@ -448,7 +455,7 @@ section.main > div {
 }
 .step-nav-divider {
     color: #b8c1cc;
-    font-size: 12px;
+    font-size: 14.5px;
     user-select: none;
 }
 
@@ -460,7 +467,7 @@ section.main > div {
     margin: 12px 0 20px;
 }
 .claim-editorial-kicker {
-    font-size: 11px;
+    font-size: 13.5px;
     letter-spacing: 0.1em;
     color: var(--muted);
     text-transform: uppercase;
@@ -468,7 +475,7 @@ section.main > div {
     margin-bottom: 6px;
 }
 .claim-editorial-amount {
-    font-size: 32px;
+    font-size: 35px;
     font-weight: 700;
     color: var(--ink);
     font-variant-numeric: tabular-nums;
@@ -476,7 +483,7 @@ section.main > div {
     letter-spacing: -0.02em;
 }
 .claim-editorial-desc {
-    font-size: 14px;
+    font-size: 17px;
     line-height: 1.6;
     color: #334155;
     margin: 0;
@@ -499,21 +506,21 @@ section.main > div {
 }
 .claim-item-code {
     font-family: Inter, monospace;
-    font-size: 11px;
+    font-size: 13.5px;
     letter-spacing: 0.08em;
     color: var(--muted);
     font-weight: 600;
     text-transform: uppercase;
 }
 .claim-item-title {
-    font-size: 15px;
+    font-size: 16.5px;
     font-weight: 600;
     color: var(--ink);
     margin-bottom: 4px;
     line-height: 1.4;
 }
 .claim-item-amount {
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 700;
     color: var(--ink);
     font-variant-numeric: tabular-nums;
@@ -531,7 +538,7 @@ section.main > div {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 11px;
+    font-size: 13.5px;
     letter-spacing: 0.08em;
     color: var(--muted);
     text-transform: uppercase;
@@ -541,7 +548,7 @@ section.main > div {
 .review-issue h3 {
     margin: 6px 0 14px;
     color: var(--ink);
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 700;
     letter-spacing: -0.01em;
 }
@@ -556,7 +563,7 @@ section.main > div {
 .material-col small {
     display: block;
     color: var(--muted);
-    font-size: 11px;
+    font-size: 13.5px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     font-weight: 600;
@@ -564,18 +571,18 @@ section.main > div {
 }
 .material-quote {
     font-family: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", serif;
-    font-size: 13.5px;
+    font-size: 16.5px;
     line-height: 1.6;
     margin: 0;
     color: #212529;
 }
 .issue-conclusion, .issue-next {
     padding-top: 12px;
-    font-size: 13px;
+    font-size: 16px;
 }
 .issue-conclusion b, .issue-next b {
     color: var(--muted);
-    font-size: 11px;
+    font-size: 13.5px;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     display: block;
@@ -603,7 +610,7 @@ section.main > div {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-size: 11px;
+    font-size: 13.5px;
     letter-spacing: 0.08em;
     color: var(--muted);
     text-transform: uppercase;
@@ -612,13 +619,13 @@ section.main > div {
 .risk-panel h3 {
     margin: 8px 0 12px;
     color: var(--ink);
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 700;
 }
 .risk-panel h3 .risk-amount {
     float: right;
     color: var(--navy);
-    font-size: 20px;
+    font-size: 22px;
     font-variant-numeric: tabular-nums;
 }
 .risk-grid {
@@ -627,19 +634,19 @@ section.main > div {
     gap: 12px 18px;
     border-top: 1px solid #edf0f3;
     padding: 12px 0 8px;
-    font-size: 13px;
+    font-size: 16px;
 }
 .risk-grid small {
     display: block;
     color: var(--muted);
-    font-size: 11px;
+    font-size: 13.5px;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     margin-bottom: 2px;
 }
 .risk-reason {
     color: var(--status-conflict);
-    font-size: 13px;
+    font-size: 16px;
     margin: 8px 0 0;
     line-height: 1.5;
 }
@@ -654,7 +661,7 @@ section.main > div {
 }
 .review-summary h2 {
     margin: 8px 0 10px;
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
 }
 .review-summary p {
@@ -662,7 +669,7 @@ section.main > div {
     color: #475467;
     line-height: 1.65;
     margin: 0;
-    font-size: 14px;
+    font-size: 17px;
 }
 
 /* Evidence Card */
@@ -682,7 +689,7 @@ section.main > div {
 .evidence-header h4 {
     color: var(--navy);
     margin: 0;
-    font-size: 16px;
+    font-size: 17.5px;
     font-weight: 750;
 }
 .evidence-grid {
@@ -691,11 +698,11 @@ section.main > div {
     gap: 14px 20px;
 }
 .evidence-cell {
-    font-size: 13.5px;
+    font-size: 16.5px;
 }
 .evidence-label {
     color: var(--muted);
-    font-size: 11.5px;
+    font-size: 14px;
     display: block;
     margin-bottom: 4px;
     text-transform: uppercase;
@@ -703,7 +710,7 @@ section.main > div {
 }
 .evidence-value {
     color: var(--ink);
-    font-size: 15px;
+    font-size: 16.5px;
     font-weight: 650;
     overflow-wrap: anywhere;
     font-variant-numeric: tabular-nums;
@@ -715,14 +722,14 @@ section.main > div {
     align-items: flex-start;
     gap: 10px;
     padding: 10px 14px;
-    font-size: 13px;
+    font-size: 16px;
     line-height: 1.5;
     margin: 10px 0 14px;
     border-radius: 0px;
 }
 .accessible-notice .notice-icon {
     font-weight: 700;
-    font-size: 14px;
+    font-size: 17px;
     line-height: 1.3;
 }
 .accessible-notice.ok {
@@ -747,7 +754,7 @@ section.main > div {
     background: #f4f6f8;
     color: #334155;
     padding: 12px 16px;
-    font-size: 13px;
+    font-size: 16px;
     line-height: 1.6;
     margin: 20px 0;
     border-radius: 0;
@@ -764,7 +771,7 @@ section.main > div {
 }
 .topology-shell pre {
     margin: 0;
-    font-size: 12px;
+    font-size: 14.5px;
     line-height: 1.4;
     font-family: Inter, monospace;
 }
@@ -817,7 +824,7 @@ div[data-testid="stExpander"] {
 }
 [data-testid="stTabs"] [data-baseweb="tab"] {
     padding: 10px 4px;
-    font-size: 14px;
+    font-size: 17px;
     font-weight: 550;
     color: var(--muted);
     border-radius: 0px !important;
@@ -915,6 +922,90 @@ def _supplementary_documents(result) -> list[dict[str, str]]:
     return restored
 
 
+def _content_key(payload) -> str:
+    """Stable content hash used as a cache key for model calls."""
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+@st.cache_data(show_spinner=False)
+def _cached_conflict_enrichment(entries_key: str, facts_key: str, materials_key: str,
+                                provider_name: str) -> list[dict]:
+    """Model enrichment for the conflict matrix, cached on content.
+
+    Streamlit rerenders on every interaction, so calling the model inline would bill the
+    same case repeatedly. The key is the content itself, not the render.
+    """
+    from legal_funds_agent.services.evidence_conflict_service import enrich_conflict_entries
+
+    entries = json.loads(entries_key)
+    try:
+        provider = provider_from_environment(provider_name)
+    except Exception:
+        return entries
+    return enrich_conflict_entries(
+        entries, json.loads(facts_key), json.loads(materials_key), provider
+    )
+
+
+@st.cache_data(show_spinner=False)
+def _cached_checklist_notes(payload_key: str, provider_name: str) -> dict:
+    """Model rewording of the checklist. ``status`` is deliberately not part of the key."""
+    from legal_funds_agent.services.case_report_service import request_investigation_notes
+
+    try:
+        provider = provider_from_environment(provider_name)
+    except Exception:
+        return {}
+    notes, _ = request_investigation_notes(json.loads(payload_key), provider)
+    return notes
+
+
+@st.cache_data(show_spinner=False)
+def _cached_narrative(facts_key: str, provider_name: str) -> dict | None:
+    """Model narrative over the deterministic fact pack, cached on the fact pack."""
+    from legal_funds_agent.services.case_narrative_service import generate_narrative_from_facts
+
+    try:
+        provider = provider_from_environment(provider_name)
+    except Exception:
+        return None
+    narrative, _ = generate_narrative_from_facts(json.loads(facts_key), provider)
+    return narrative
+
+
+def _conflict_matrix_for(result, supplementary_documents: list[dict[str, str]]) -> list[dict]:
+    """Pick the conflict matrix implementation for the case at hand.
+
+    GOLD_CASE_001 is the fabricated showcase, and its four conflicts are fixed
+    presentation content. Every other case goes through the generic path, which derives
+    third-party account facts from the transactions instead of returning nothing.
+    """
+    if getattr(result.claim, "case_id", "") == "GOLD_CASE_001":
+        return showcase_conflict_matrix(result.transactions, supplementary_documents)
+    from legal_funds_agent.services.evidence_conflict_service import deterministic_conflict_entries
+
+    claims = result.claims if getattr(result, "claims", None) else [result.claim]
+    entries, facts = deterministic_conflict_entries(result.transactions, claims)
+    if not entries:
+        return []
+    materials = [
+        {"label": str(document.get("filename") or f"材料{index}"), "text": str(document.get("text") or "")}
+        for index, document in enumerate(supplementary_documents or [], start=1)
+        if str(document.get("text") or "").strip()
+    ]
+    if not materials or not _model_enhancement_enabled():
+        return entries
+    return _cached_conflict_enrichment(
+        _content_key(entries), _content_key(facts), _content_key(materials), provider_name
+    )
+
+
+def _model_enhancement_enabled() -> bool:
+    return bool(st.session_state.get("model_enhancement_enabled", False))
+
+
 def _render_fund_flow(graph, *, height: int = 430, key: str | None = None, transactions=None, disputed_names=None) -> None:
     """Render the fund flow topology with the Cytoscape.js + ELK component."""
     if not graph.nodes or not graph.edges:
@@ -928,6 +1019,13 @@ def _render_fund_flow(graph, *, height: int = 430, key: str | None = None, trans
     from components.fund_flow import render_fund_flow, topology_to_payload
 
     payload = topology_to_payload(graph, transactions=transactions, disputed_names=disputed_names)
+    # A tap inside the component triggers a rerun that remounts the graph;
+    # echo the active selection back through the payload so the focus
+    # highlight can be re-applied on the fresh instance.
+    sel_state_key = f"{key}__selection_echo"
+    last_selection = st.session_state.get(sel_state_key)
+    if last_selection:
+        payload["selected"] = last_selection
     state = render_fund_flow(payload, height=height, key=key)
 
     selection = None
@@ -935,6 +1033,12 @@ def _render_fund_flow(graph, *, height: int = 430, key: str | None = None, trans
         selection = getattr(state, "selection", None)
         if selection is None and isinstance(state, dict):
             selection = state.get("selection")
+    current_selection = (
+        {"type": selection.get("type"), "id": selection.get("id")} if selection else None
+    )
+    if current_selection != last_selection:
+        st.session_state[sel_state_key] = current_selection
+        st.rerun()
     if not selection:
         st.caption("点击图中账户或资金连线可查看来源明细；滚轮缩放、拖拽平移。")
         return
@@ -1049,6 +1153,28 @@ def _save_investigation_items(database_path: Path | None, case_id: str, items: l
         Repository(connection).save_investigation_items(case_id, items)
 
 
+def _next_available_case_id(database_path: Path, base: str = "CASE-0001") -> str:
+    """Suggest the next unused case id when the default already has signed claims."""
+    if not database_path.exists():
+        return base
+    with closing(connect(database_path)) as connection:
+        repo = Repository(connection)
+        cases = repo.list_cases()
+    existing = {c["case_id"] for c in cases}
+    if base not in existing:
+        return base
+    prefix, num_part = base.rsplit("-", 1)
+    try:
+        start = int(num_part)
+    except ValueError:
+        start = 1
+    for n in range(start + 1, start + 10000):
+        candidate = f"{prefix}-{n:04d}"
+        if candidate not in existing:
+            return candidate
+    return f"{prefix}-{start + 1:04d}"
+
+
 def _restore_case_from_database(database_path: Path, case_id: str):
     """Rebuild the in-memory workflow view from the immutable local snapshot."""
     with closing(connect(database_path)) as connection:
@@ -1135,6 +1261,9 @@ def _restore_case_into_session(database_path: Path, case_id: str) -> bool:
         st.session_state.pop("decision", None)
         st.session_state.pop("report", None)
     st.session_state.pop("failed_audit_events", None)
+    st.session_state.pop("supplementary_documents", None)
+    for k in [k for k in st.session_state if str(k).endswith("__selection_echo")]:
+        st.session_state.pop(k, None)
     return True
 
 
@@ -1169,17 +1298,17 @@ def render_case_masthead(
     st.markdown(
         f'<header class="case-masthead">'
         f'<div class="masthead-top">'
-        f'<span class="masthead-case-code">CASE / {case_id}</span>'
-        f'<span class="masthead-status-badge">{status}</span>'
+        f'<span class="masthead-case-code">CASE / {html.escape(case_id)}</span>'
+        f'<span class="masthead-status-badge">{html.escape(status)}</span>'
         f'</div>'
-        f'<h1>{title}</h1>'
-        f'<p class="masthead-subtitle">{sub}</p>'
+        f'<h1>{html.escape(title)}</h1>'
+        f'<p class="masthead-subtitle">{html.escape(sub)}</p>'
         f'<div class="masthead-meta">'
-        f'<span>{case_type}</span>'
+        f'<span>{html.escape(case_type)}</span>'
         f'<span class="meta-dot">·</span>'
-        f'<span>{data_classification}</span>'
+        f'<span>{html.escape(data_classification)}</span>'
         f'<span class="meta-dot">·</span>'
-        f'<span>{review_stage}</span>'
+        f'<span>{html.escape(review_stage)}</span>'
         f'</div>'
         f'</header>',
         unsafe_allow_html=True,
@@ -1189,9 +1318,9 @@ def render_case_masthead(
 def render_stat_strip(items: list[tuple[str, str, str]]) -> None:
     cells = "".join(
         f'<div class="stat-item">'
-        f'<div class="stat-label">{label}</div>'
-        f'<div class="stat-value">{value}</div>'
-        f'<div class="stat-note">{note}</div>'
+        f'<div class="stat-label">{html.escape(label)}</div>'
+        f'<div class="stat-value">{html.escape(value)}</div>'
+        f'<div class="stat-note">{html.escape(note)}</div>'
         f'</div>'
         for label, value, note in items
     )
@@ -1315,17 +1444,17 @@ def render_high_risk_transaction(priority: str, tx, candidate) -> None:
     st.markdown(
         f'<article class="risk-panel">'
         f'<div class="risk-kicker">'
-        f'<span>{priority} · HIGH RISK TRANSACTION</span>'
+        f'<span>{html.escape(priority)} · HIGH RISK TRANSACTION</span>'
         f'<span class="accessible-status status-conflict">! 待核查阻断项</span>'
         f'</div>'
-        f'<h3>▌ {tx.transaction_id} <strong class="risk-amount">¥{tx.amount:,.2f}</strong></h3>'
+        f'<h3>▌ {html.escape(tx.transaction_id)} <strong class="risk-amount">¥{tx.amount:,.2f}</strong></h3>'
         f'<div class="risk-grid">'
-        f'<div><small>交易日期</small>{tx.date}</div>'
-        f'<div><small>付款人</small>{tx.payer_name or "-"}</div>'
-        f'<div><small>收款人</small>{tx.payee_name or "-"}</div>'
-        f'<div><small>来源定位</small>{_source_locator_label(tx)}</div>'
+        f'<div><small>交易日期</small>{html.escape(str(tx.date))}</div>'
+        f'<div><small>付款人</small>{html.escape(tx.payer_name or "-")}</div>'
+        f'<div><small>收款人</small>{html.escape(tx.payee_name or "-")}</div>'
+        f'<div><small>来源定位</small>{html.escape(_source_locator_label(tx))}</div>'
         f'</div>'
-        f'<p class="risk-reason"><strong>风险说明：</strong>{_risks_to_chinese(candidate.risk_codes)}</p>'
+        f'<p class="risk-reason"><strong>风险说明：</strong>{html.escape(_risks_to_chinese(candidate.risk_codes))}</p>'
         f'</article>',
         unsafe_allow_html=True,
     )
@@ -1358,13 +1487,13 @@ def render_claim_review_items(claims_list, result, decision) -> None:
 
         cfg = STATUS_CONFIG.get(status_val, {"symbol": "·", "text": status_val, "class": "status-neutral"})
         claim_code = f"C{idx:03d}"
-        desc = f"被害人 {c.victim_name} 向 {c.alleged_recipient_name or '指定账户'} 支付涉案款项 ({c.time_start} 至 {c.time_end})"
+        desc = f"被害人 {html.escape(c.victim_name)} 向 {html.escape(c.alleged_recipient_name or '指定账户')} 支付涉案款项 ({c.time_start} 至 {c.time_end})"
 
         html_items.append(
             f'<div class="claim-item-row">'
             f'<div class="claim-item-meta">'
-            f'<span class="claim-item-code">{claim_code} · {c.id}</span>'
-            f'<span class="accessible-status {cfg["class"]}"><span class="status-symbol">{cfg["symbol"]}</span> {cfg["text"]}</span>'
+            f'<span class="claim-item-code">{html.escape(claim_code)} · {html.escape(c.id)}</span>'
+            f'<span class="accessible-status {cfg["class"]}"><span class="status-symbol">{cfg["symbol"]}</span> {html.escape(cfg["text"])}</span>'
             f'</div>'
             f'<div class="claim-item-title">{desc}</div>'
             f'<div class="claim-item-amount">¥{c.claimed_amount:,.2f}</div>'
@@ -1430,18 +1559,18 @@ REASON_TO_CN = {v: k for k, v in REASON_CN.items()}
 
 
 def _evidence_card(title: str, items: list[tuple[str, str]], badge: tuple[str, str] | None = None) -> None:
-    badge_html = f'<span class="accessible-status status-{badge[1]}">{badge[0]}</span>' if badge else ""
+    badge_html = f'<span class="accessible-status status-{html.escape(badge[1])}">{html.escape(badge[0])}</span>' if badge else ""
     cells = "".join(
         f'<div class="evidence-cell">'
-        f'<span class="evidence-label">{label}</span>'
-        f'<span class="evidence-value">{value}</span>'
+        f'<span class="evidence-label">{html.escape(label)}</span>'
+        f'<span class="evidence-value">{html.escape(value)}</span>'
         f'</div>'
         for label, value in items
     )
     st.markdown(
         f'<article class="evidence-card">'
         f'<div class="evidence-header">'
-        f'<h4>{title}</h4>'
+        f'<h4>{html.escape(title)}</h4>'
         f'{badge_html}'
         f'</div>'
         f'<div class="evidence-grid">{cells}</div>'
@@ -1512,7 +1641,11 @@ def case_page() -> None:
 
 
 def _materials_panel(active_case_id: str) -> None:
-    case_id = st.text_input("案件编号", value=active_case_id)
+    database_path = ROOT / "data" / "cases.db"
+    suggested_case_id = _next_available_case_id(database_path, base=active_case_id)
+    if suggested_case_id != active_case_id:
+        st.info(f"案件编号 {active_case_id} 已存在历史案件记录，已为您分配新案件编号 {suggested_case_id}。")
+    case_id = st.text_input("案件编号", value=suggested_case_id)
     persist_locally = st.checkbox("保存脱敏后的本地案件记录", value=False, help="默认不保存上传材料；启用后仅写入本机 SQLite。")
     source_default = "实战评测(GOLD_CASE_001 · 736.8万)" if active_case_id == "GOLD_CASE_001" else "演示案件(D01)"
     if active_case_id not in {"CASE-0001"} and active_case_id != "GOLD_CASE_001":
@@ -1568,7 +1701,16 @@ def _materials_panel(active_case_id: str) -> None:
                         })
                     st.write("3. 直接解析原始 Excel 银行流水并规范化...")
                     xlsx_bytes = (pkg / "visible" / "bank" / "02_银行流水账单.xlsx").read_bytes()
-                    csv_text = extract_transactions_csv(xlsx_bytes, filename="02_银行流水账单.xlsx")
+                    csv_text, csv_skip_stats = extract_transactions_csv_detailed(xlsx_bytes, filename="02_银行流水账单.xlsx")
+                    total_skipped = sum(csv_skip_stats.values())
+                    if total_skipped > 0:
+                        st.warning(
+                            f"银行流水有 {total_skipped} 行未导入："
+                            f"方向无法识别 {csv_skip_stats.get('invalid_direction', 0)} 行、"
+                            f"日期无法解析 {csv_skip_stats.get('invalid_datetime', 0)} 行、"
+                            f"金额或对手方缺失 {csv_skip_stats.get('invalid_amount_or_counterparty', 0)} 行，"
+                            f"请核对原始文件。"
+                        )
 
                     st.write("4. 运行事实主张抽取与确定性资金穿透对账引擎...")
                     provider = provider_from_environment(provider_name)
@@ -1580,6 +1722,9 @@ def _materials_panel(active_case_id: str) -> None:
                         task_id="TASK-GOLD-001",
                         provider=provider,
                         allow_multiple_claims=True,
+                        statement_provider=provider,
+                        enable_claim_audit=enable_claim_audit,
+                        audit_provider=provider,
                         transaction_evidence_id="EVI-BANK-XLSX",
                     )
                     status.update(label=f"GOLD_CASE_001 审查完成：召回 {len(result.candidates)}/{len(result.transactions)} 笔流水，总额 ¥{result.claim.claimed_amount:,.2f}", state="complete")
@@ -1612,14 +1757,28 @@ def _materials_panel(active_case_id: str) -> None:
                     {"filename": item.name, "text": extract_document_text(item.getvalue(), filename=item.name)}
                     for item in (supplementary or [])
                 ]
+                provider = provider_from_environment(provider_name)
+                csv_text, csv_skip_stats = extract_transactions_csv_detailed(transactions.getvalue(), filename=transactions.name)
+                total_skipped = sum(csv_skip_stats.values())
+                if total_skipped > 0:
+                    st.warning(
+                        f"银行流水有 {total_skipped} 行未导入："
+                        f"方向无法识别 {csv_skip_stats.get('invalid_direction', 0)} 行、"
+                        f"日期无法解析 {csv_skip_stats.get('invalid_datetime', 0)} 行、"
+                        f"金额或对手方缺失 {csv_skip_stats.get('invalid_amount_or_counterparty', 0)} 行，"
+                        f"请核对原始文件。"
+                    )
                 result = run_case_inputs(
                     indictment_text=indictment_text,
                     statement_text=statement_text,
-                    csv_text=extract_transactions_csv(transactions.getvalue(), filename=transactions.name),
+                    csv_text=csv_text,
                     case_id=case_id,
                     task_id=f"TASK-{case_id}",
-                    provider=provider_from_environment(provider_name),
+                    provider=provider,
                     allow_multiple_claims=True,
+                    statement_provider=provider,
+                    enable_claim_audit=enable_claim_audit,
+                    audit_provider=provider,
                     transaction_evidence_id=f"EVI-BANK-{transactions.name.rsplit('.', 1)[-1].upper()}",
                 )
                 st.session_state.result = result
@@ -1720,7 +1879,7 @@ def _case_overview() -> None:
         if not decision:
             st.markdown(
                 f'<div style="text-align:right;margin:20px 0 10px;">'
-                f'<span style="font-size:12.5px;color:var(--navy);font-weight:700;letter-spacing:0.04em;">'
+                f'<span style="font-size:15.5px;color:var(--navy);font-weight:700;letter-spacing:0.04em;">'
                 f'{total_candidates:02d} ITEMS REQUIRE HUMAN REVIEW → 请前往【03 资金证据核验】'
                 f'</span>'
                 f'</div>',
@@ -1875,7 +2034,7 @@ def transactions_page(result) -> None:
 
     with tab_graph:
         render_section_heading("03 / TOPOLOGY", "核心涉案资金流向图", f"从 {len(result.transactions)} 笔原始流水提取主要证据路径：{len(topo.nodes)} 个账户节点、{len(topo.edges)} 条唯一交易事件")
-        _render_fund_flow(topo, height=430, key="fund_flow_focus", transactions=result.transactions, disputed_names=disputed_names)
+        _render_fund_flow(topo, height=540, key="fund_flow_focus", transactions=result.transactions, disputed_names=disputed_names)
         with st.expander("查看全案资金流向图（全部账户与流水）", expanded=False):
             _render_fund_flow(all_topo, height=560, key="fund_flow_all", transactions=result.transactions, disputed_names=disputed_names)
 
@@ -1971,7 +2130,13 @@ def review_page(result) -> None:
                 result.claim = confirmed
             repository_path = st.session_state.get("repository_path")
             if repository_path:
-                _save_confirmed_claim(repository_path, confirmed)
+                try:
+                    _save_confirmed_claim(repository_path, confirmed)
+                except ValueError as exc:
+                    if "immutable claim already exists" in str(exc):
+                        st.error("该案号下已有签署存档的资金主张，不可覆盖。请更换案件编号后重新上传材料。")
+                        return
+                    raise
             st.session_state.pop("decision", None)
             st.session_state.pop("report", None)
             st.rerun()
@@ -2005,7 +2170,7 @@ def review_page(result) -> None:
             st.dataframe([{"重复组": index, "流水编号": value} for index, value in enumerate(groups, 1)], width="stretch", hide_index=True)
 
     supplementary_documents = _supplementary_documents(result)
-    conflict_matrix = build_evidence_conflict_matrix(result.transactions, supplementary_documents)
+    conflict_matrix = _conflict_matrix_for(result, supplementary_documents)
     render_section_heading("02 / CONFLICTS", "言词证据与流水冲突焦点", "言词材料与资金流水的并列交叉回查")
     if conflict_matrix:
         for conflict in conflict_matrix:
@@ -2051,6 +2216,7 @@ def review_page(result) -> None:
 
     # 快捷批量操作工具栏
     col_b1, col_b2, col_b3 = st.columns(3)
+    editor_state_key = f"candidate_review_editor_v2_{claim.id}"
     if col_b1.button("批量采纳常规候选", use_container_width=True, help="采纳无阻断风险的候选；高风险阻断项自动保留为【列为争议】"):
         for c in candidates:
             if c.blocking_conflict:
@@ -2059,6 +2225,7 @@ def review_page(result) -> None:
             else:
                 st.session_state[state_disp_key][c.transaction_id] = "采信纳入 (计入涉案数额)"
                 st.session_state[state_reason_key][c.transaction_id] = "吻合起诉指控事实"
+        st.session_state.pop(editor_state_key, None)
         st.rerun()
 
     if col_b2.button("智能预填：第三方代收列争议，其余采纳", use_container_width=True, help="自动识别第三方非嫌疑人开户的流水标记为【列为争议】，其余流水置为【采信纳入】"):
@@ -2069,12 +2236,14 @@ def review_page(result) -> None:
             else:
                 st.session_state[state_disp_key][c.transaction_id] = "采信纳入 (计入涉案数额)"
                 st.session_state[state_reason_key][c.transaction_id] = "吻合起诉指控事实"
+        st.session_state.pop(editor_state_key, None)
         st.rerun()
 
     if col_b3.button("重置所有选择", use_container_width=True):
         for c in candidates:
             st.session_state[state_disp_key][c.transaction_id] = "待人工核定"
             st.session_state[state_reason_key][c.transaction_id] = None
+        st.session_state.pop(editor_state_key, None)
         st.rerun()
 
     candidate_rows = []
@@ -2120,7 +2289,7 @@ def review_page(result) -> None:
     st.caption("普通候选的完整字段、处置选择和原始行号统一保留在上方审查表；需要深查时按 P 编号回到对应行。")
 
     # 步骤三：签署复核确认
-    render_section_heading("04 / SIGN", "签署复核确认并保存底稿", "经办人员对事实认定与流水处置进行不可篡改电子签署")
+    render_section_heading("04 / SIGN", "签署复核确认并保存底稿", "经办人员对事实认定与流水处置进行电子签署，签署记录入库存档、不可静默覆盖")
     c_r1, c_r2 = st.columns([1, 2])
     with c_r1:
         reviewer = st.text_input("复核人姓名 / 工号", value="检务复核官", key=f"reviewer_{claim.id}")
@@ -2201,7 +2370,7 @@ def audit_page(result) -> None:
     data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "演示案件"
     render_case_masthead(result.claim.case_id, status=status_label, data_classification=data_label, review_stage="审查底稿与审计留痕")
 
-    render_section_heading("01 / AUDIT TRAIL", "全案审计留痕日志", "电子证据链完整性与不可篡改记录")
+    render_section_heading("01 / AUDIT TRAIL", "全案审计留痕日志", "电子证据链完整性与防静默篡改留痕")
 
     step_map = {
         "claim_extraction": "起诉书事实主张提取",
@@ -2228,7 +2397,7 @@ def audit_page(result) -> None:
             "模型引擎": event.model or "本地规则引擎",
             "Prompt Tokens": event.input_tokens or "-",
             "Output Tokens": event.output_tokens or "-",
-            "记录时间": event.finished_at[:19].replace("T", " "),
+            "记录时间": (event.finished_at or "-")[:19].replace("T", " "),
             "防伪数据哈希": (event.output_hash or "-")[:16] + "..." if event.output_hash else "-",
         })
     st.dataframe(audit_rows, width="stretch", hide_index=True)
@@ -2244,31 +2413,17 @@ def audit_page(result) -> None:
         ("人工复核状态", _status_label(decision.status.value), "经办人复核认定"),
         ("资金证据覆盖", f"¥{decision.covered_amount:,.2f}", "银行流水证实"),
         ("未覆盖差额", f"¥{decision.uncovered_amount:,.2f}", "尚待查明差额"),
-        ("复核版本", f"v{decision.version}", "不可篡改底稿编号"),
+        ("复核版本", f"v{decision.version}", "防静默篡改底稿编号"),
     ])
     render_review_summary("资金证据核验结论", f"当前材料中，已人工纳入流水 {len(decision.included_transaction_ids)} 笔，共计人民币 ¥{decision.covered_amount:,.2f}；尚未覆盖 ¥{decision.uncovered_amount:,.2f}。复核人：{decision.reviewer or '未填写'}。")
     st.markdown('<div class="legal-notice"><strong>法律效力提示：</strong>' + report["disclaimer"] + '</div>', unsafe_allow_html=True)
-    from legal_funds_agent.services.topology_service import build_fund_flow_topology
-    claims_for_topo = result.claims if getattr(result, "claims", None) else [result.claim]
-    audit_topo = build_fund_flow_topology(claims_for_topo, result.transactions, decision)
-    if audit_topo.nodes and audit_topo.edges:
-        audit_candidates = [c for cands in getattr(result, "candidates_by_claim", {}).values() for c in cands] or getattr(result, "candidates", [])
-        audit_disputed = {
-            tx.payee_name
-            for candidate in audit_candidates
-            if "THIRD_PARTY_RECIPIENT" in candidate.risk_codes
-            for tx in [result.transactions.get(candidate.transaction_id)]
-            if tx and tx.payee_name
-        }
-        render_section_heading("02.1 / TOPOLOGY", "重点关联资金流向", "采纳流水之拓扑关联")
-        _render_fund_flow(audit_topo, height=430, key="fund_flow_audit", transactions=result.transactions, disputed_names=audit_disputed)
     json_text = report_to_json(report)
     csv_text = report_to_csv(report)
     html_text = report_to_html(report)
 
     from legal_funds_agent.services.case_report_service import build_case_master_report, case_report_to_html
     claims_list = result.claims if getattr(result, "claims", None) else [result.claim]
-    conflict_matrix = build_evidence_conflict_matrix(result.transactions, _supplementary_documents(result))
+    conflict_matrix = _conflict_matrix_for(result, _supplementary_documents(result))
     decisions_dict = {}
     if getattr(result, "system_decisions_by_claim", None):
         decisions_dict = dict(result.system_decisions_by_claim)
@@ -2277,6 +2432,7 @@ def audit_page(result) -> None:
     elif not decisions_dict and result.system_decision:
         decisions_dict[result.claim.id] = result.system_decision
 
+    claim_audit_result = getattr(result, "claim_audit", None)
     master_rep = build_case_master_report(
         case_id=result.claim.case_id,
         claims=claims_list,
@@ -2285,6 +2441,9 @@ def audit_page(result) -> None:
         audit_events=result.audit_events,
         claim_locators=result.claim_locators,
         evidence_conflicts=conflict_matrix,
+        extraction_issues=getattr(result, "extraction_issues", []),
+        missing_claims=getattr(claim_audit_result, "missing_claims", []) if claim_audit_result else [],
+        alias_registry=getattr(result, "alias_registry", None),
     )
     master_summary = master_rep.get("summary", {})
     ref_amt = master_summary.get("total_refund_amount", 0.0)
@@ -2302,6 +2461,30 @@ def audit_page(result) -> None:
         st.info(f"【疑似转回流水核对】按账户关系和唯一交易事件识别到 {len(identify_refund_transactions(claims_list, result.transactions.values()))} 笔、¥{ref_amt:,.2f} 元可能转入被害人账户；摘要不能单独证明返还性质或法定冲减效果，¥{net_amt:,.2f} 仅为参考值。")
 
     st.caption(f"【审查结果数据完整性指纹 (SHA-256)】：`{master_rep['data_integrity_sha256']}`")
+
+    extraction_issues = getattr(result, "extraction_issues", [])
+    claim_audit = getattr(result, "claim_audit", None)
+    statement_warnings = getattr(result, "statement_extraction_warnings", [])
+    audit_queue = getattr(claim_audit, "missing_claims", []) if claim_audit else []
+    if extraction_issues or audit_queue or statement_warnings:
+        with st.expander("提取质量与漏提复核", expanded=bool(extraction_issues or audit_queue)):
+            st.caption(
+                "以下为提取质量信号，不参与金额、覆盖与状态判定；未经人工确认前不会进入资金复核。"
+            )
+            for item in extraction_issues:
+                st.warning(
+                    f"主张 {item['claim_id']}（¥{item['claimed_amount']}）："
+                    f"{'、'.join(item['issues'])}。{item['next_action']}"
+                )
+            for item in audit_queue:
+                suffix = f"｜{item['anchor_issue']}" if item.get("anchor_issue") else ""
+                st.info(
+                    f"疑似漏项 {item['pending_id']}（{item['status']}）："
+                    f"{item['victim_name']} ¥{item['claimed_amount']}{suffix}"
+                    f"\n\n原文：{item['source_text']}"
+                )
+            if statement_warnings:
+                st.caption("陈述提取降级记录：" + "；".join(statement_warnings))
 
     with st.expander("查看补充调查与原始材料回查清单", expanded=True):
         st.caption("每项建议都保留关联流水或主张的原始定位；系统不改写原始 Word/Excel，只提供回查入口和执行记录。")
@@ -2325,6 +2508,37 @@ def audit_page(result) -> None:
             f'</div>',
             unsafe_allow_html=True,
         )
+
+    if _model_enhancement_enabled():
+        from legal_funds_agent.services.case_report_service import apply_investigation_notes
+
+        # Wording only. Numbers are constrained to the item's own facts, so a rejected
+        # rewrite simply keeps the template text.
+        payload = [
+            {
+                "item_id": item["item_id"],
+                "category": item.get("category"),
+                "priority": item.get("priority"),
+                "target": item.get("target"),
+                "facts": item.get("facts") or {},
+                "current_suggestion": item.get("suggestion"),
+                "current_next_action": item.get("next_action"),
+            }
+            for item in checklist
+        ]
+        if payload:
+            notes = _cached_checklist_notes(_content_key(payload), provider_name)
+            if notes:
+                checklist = apply_investigation_notes(checklist, notes)
+                master_rep["investigation_checklist"] = checklist
+
+        from legal_funds_agent.services.case_narrative_service import build_narrative_facts
+
+        narrative = _cached_narrative(
+            _content_key(build_narrative_facts(master_rep)), provider_name
+        )
+        if narrative:
+            master_rep["narrative"] = narrative
 
     master_html = case_report_to_html(master_rep)
     master_json = case_report_to_json(master_rep)
@@ -2381,6 +2595,20 @@ with st.sidebar.expander("模型与规则配置", expanded=False):
         format_func=lambda value: "本地 Mock（推荐演示）" if value == "mock" else "DeepSeek API",
         help="Mock 不联网；DeepSeek 负责事实主张提取，金额穿透与审查状态始终由确定性规则完成。"
     )
+    enable_claim_audit = st.checkbox(
+        "启用漏提复核",
+        value=False,
+        help="对同一份起诉书做第二次对抗式提取。疑似漏项只作为待人工确认事项，不会自动并入资金复核。",
+    )
+    model_enhancement = st.checkbox(
+        "启用模型增强",
+        value=False,
+        help=(
+            "让模型为冲突比对补充材料引文、为回查建议改写措辞、生成全案摘要。"
+            "数字一律由确定性代码提供，模型不得新增；结果按内容缓存，同一案件不会重复计费。"
+        ),
+    )
+    st.session_state["model_enhancement_enabled"] = model_enhancement
 
 PAGES = [
     "01  案件审查概览",

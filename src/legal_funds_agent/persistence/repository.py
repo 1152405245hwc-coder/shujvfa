@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
 from typing import Any
 
 from legal_funds_agent.audit.logger import AuditEvent
 from legal_funds_agent.domain.models import Claim, ReviewDecision, Transaction
 
 
-def _mask_account(value: str | None) -> str | None:
-    if not value:
-        return value
-    return "*" * max(len(value) - 4, 0) + value[-4:]
+from legal_funds_agent.utils import mask_account as _mask_account
 
 
 class Repository:
@@ -179,13 +175,12 @@ class Repository:
         events = []
         for r in rows:
             data = json.loads(r["payload_json"])
-            fallback_time = datetime.now(timezone.utc).isoformat()
             events.append(AuditEvent(
                 task_id=data.get("task_id", ""),
                 case_id=data.get("case_id", case_id),
                 step=data.get("step", ""),
-                started_at=data.get("started_at", fallback_time),
-                finished_at=data.get("finished_at", fallback_time),
+                started_at=data.get("started_at"),
+                finished_at=data.get("finished_at"),
                 duration_ms=int(data.get("duration_ms", 0) or 0),
                 tool=data.get("tool", ""),
                 status=data.get("status", "success"),

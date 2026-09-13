@@ -3,9 +3,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from legal_funds_agent.domain.models import Claim
+from legal_funds_agent.llm.base import LLMProvider
+from legal_funds_agent.llm.schemas import SCHEMA_STATEMENT_FACT, supports_schema
+
+REGEX_SOURCE = "regex_v0.1"
 
 
 @dataclass(frozen=True)
@@ -17,9 +21,10 @@ class StatementPaymentFact:
     source_text: str
     start_offset: int
     end_offset: int
+    extraction_source: str = REGEX_SOURCE
 
 
-def extract_statement_payment(text: str, *, victim_name: str) -> StatementPaymentFact:
+def _regex_fact(text: str, *, victim_name: str) -> StatementPaymentFact:
     match = re.search(
         r"(?:从)?(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日"
         r".*?(?:按照|向)(?P<recipient>[\u4e00-\u9fff]{1,3}某)(?:的)?(?:要求|指示)?.*?"
@@ -44,6 +49,90 @@ def extract_statement_payment(text: str, *, victim_name: str) -> StatementPaymen
         payment_date=date(int(match["year"]), int(match["month"]), int(match["day"])),
         source_text=match.group(0), start_offset=match.start(), end_offset=match.end(),
     )
+
+
+def _model_fact(row: dict, text: str, *, victim_name: str, provider_name: str) -> StatementPaymentFact:
+    """Build a fact from a model row, re-locating ``source_text`` in the original material.
+
+    A model cannot assert a payment that is not literally present: the span has to be
+    found in the statement text and has to be unique, exactly like claim extraction.
+    """
+    source_text = str(row.get("source_text") or "")
+    if not source_text:
+        raise ValueError("statement source_text is empty")
+    start_offset = text.find(source_text)
+    if start_offset < 0:
+        raise ValueError("statement source_text is not present in the statement text")
+    if text.find(source_text, start_offset + 1) >= 0:
+        raise ValueError("statement source_text matches multiple locations")
+    try:
+        raw_amount = str(row.get("amount") or "0").replace(",", "").strip()
+        amount = Decimal(raw_amount).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"statement amount is not a decimal: {row.get('amount')!r}") from exc
+    if amount <= Decimal("0"):
+        raise ValueError("statement amount must be positive")
+    raw_date = str(row.get("payment_date") or "")
+    try:
+        year, month, day = (int(part) for part in raw_date.split("-"))
+        payment_date = date(year, month, day)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"statement payment_date is not YYYY-MM-DD: {raw_date!r}") from exc
+    return StatementPaymentFact(
+        victim_name=victim_name,
+        recipient_name=str(row.get("recipient_name") or "").strip() or None,
+        amount=amount,
+        payment_date=payment_date,
+        source_text=source_text,
+        start_offset=start_offset,
+        end_offset=start_offset + len(source_text),
+        extraction_source=f"{provider_name}:{SCHEMA_STATEMENT_FACT}",
+    )
+
+
+def extract_statement_payment(
+    text: str,
+    *,
+    victim_name: str,
+    provider: LLMProvider | None = None,
+    warnings: list[str] | None = None,
+    allow_missing: bool = False,
+) -> StatementPaymentFact | None:
+    """Extract the victim's payment fact.
+
+    When a provider that supports ``statement_fact_v0.1`` is supplied, the model reads the
+    statement first. Every failure mode degrades to the deterministic regex instead of
+    aborting the case, but each degradation is recorded in ``warnings`` so that a silent
+    fallback is impossible. Without a provider the behaviour is exactly the regex path.
+
+    ``allow_missing`` decides what happens when no payment fact can be established at all
+    — for example a statement that only says "陆陆续续转了三十来万，记不清了". Raising
+    (the default) keeps the historical contract; returning ``None`` lets the caller turn
+    the gap into a human review item instead of stopping the whole case.
+    """
+    if provider is not None and supports_schema(provider, SCHEMA_STATEMENT_FACT):
+        try:
+            rows = provider.generate_structured(text=text, schema_name=SCHEMA_STATEMENT_FACT)
+        except Exception as exc:  # noqa: BLE001 - any provider failure degrades to regex
+            if warnings is not None:
+                warnings.append(f"STATEMENT_MODEL_CALL_FAILED:{type(exc).__name__}")
+            rows = None
+        if rows:
+            try:
+                return _model_fact(rows[0], text, victim_name=victim_name, provider_name=provider.name)
+            except ValueError as exc:
+                if warnings is not None:
+                    warnings.append(f"STATEMENT_MODEL_OUTPUT_REJECTED:{exc}")
+        elif rows == [] and warnings is not None:
+            warnings.append("STATEMENT_MODEL_NO_FACT")
+    try:
+        return _regex_fact(text, victim_name=victim_name)
+    except ValueError:
+        if not allow_missing:
+            raise
+        if warnings is not None:
+            warnings.append("STATEMENT_FACT_UNAVAILABLE")
+        return None
 
 
 def compare_statement_to_claim(fact: StatementPaymentFact, claim: Claim) -> list[str]:

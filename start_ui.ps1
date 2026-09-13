@@ -34,8 +34,23 @@ try {
 Write-Host "[1/2] 正在准备启动资金链证审工作台..." -ForegroundColor Green
 Write-Host "本地访问地址: http://localhost:8501" -ForegroundColor Yellow
 
-# 后台异步启动默认浏览器，延迟 2 秒打开，确保 Streamlit 端口已就绪
-Start-Process "powershell" -WindowStyle Hidden -ArgumentList "-NoProfile -Command Start-Sleep -Seconds 2; Start-Process http://localhost:8501"
+# 后台异步启动默认浏览器，循环健康检查最多 30 秒，确保 Streamlit 端口已就绪
+$maxAttempts = 60
+$opened = $false
+for ($i = 0; $i -lt $maxAttempts; $i++) {
+    try {
+        $resp = Invoke-WebRequest -Uri http://localhost:8501/healthz -UseBasicParsing -TimeoutSec 2
+        if ($resp.StatusCode -eq 200) {
+            Start-Process http://localhost:8501
+            $opened = $true
+            break
+        }
+    } catch {}
+    Start-Sleep -Milliseconds 500
+}
+if (-not $opened) {
+    Write-Host "[警告] 服务启动超时，请手动刷新浏览器。" -ForegroundColor Yellow
+}
 
 Write-Host "[2/2] 正在启动 Streamlit 高稳定性守护模式并打开浏览器..." -ForegroundColor Green
 Write-Host "提示: 保持此窗口开启即可保持系统运行。如需关闭，直接关闭本控制台窗口即可。" -ForegroundColor Gray

@@ -75,9 +75,12 @@ $env:PYTHONPATH='src'
 显式配置相应 API Key 后，可将 `--provider` 改为 `openai` 或 `deepseek`。真实 Provider
 默认遇到首个错误即停止，避免在配置错误或限流时继续产生请求；只有明确需要收集全部失败时才加
 `--continue-on-error`。当前冻结的 Mock baseline 见
-[baseline_mock_v0.1.json](docs/evaluation/baseline_mock_v0.1.json)，DeepSeek 同输入实测见
-[baseline_deepseek_v0.1.json](docs/evaluation/baseline_deepseek_v0.1.json)。DeepSeek 五案均通过，
-总计输入790 tokens、输出425 tokens，平均延迟888.4ms；该结果只说明公开回归集表现，不能替代独立盲测。
+[baseline_mock_v0.1.json](docs/evaluation/baseline_mock_v0.1.json)，DeepSeek 同输入实测历史记录见
+[baseline_deepseek_v0.1.json](docs/evaluation/baseline_deepseek_v0.1.json)。当前 v0.2 基线见
+[baseline_deepseek_v0.2.json](docs/evaluation/baseline_deepseek_v0.2.json)与
+[docs/evaluation/README.md](docs/evaluation/README.md)。DeepSeek 五案均通过，
+v0.2 仅主张提取口径为输入 805 tokens、输出 425 tokens、平均延迟 946.0 ms；
+全链路真实成本为 15 次调用、输入 3315 tokens、输出 805 tokens；该结果只说明公开回归集表现，不能替代独立盲测。
 
 另有一组在首次真实调用前以 SHA-256 封存的内部留出集，运行方式为：
 

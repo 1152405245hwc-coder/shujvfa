@@ -12,10 +12,7 @@ from legal_funds_agent.domain.models import Claim, ReviewDecision, SourceLocator
 DISCLAIMER = "本结果仅反映当前导入材料的资金证据对应与覆盖情况，不替代最终司法判断。"
 
 
-def _mask_account(value: str | None) -> str | None:
-    if not value:
-        return value
-    return "*" * max(len(value) - 4, 0) + value[-4:]
+from legal_funds_agent.utils import mask_account as _mask_account
 
 
 def _export_transaction(transaction: Transaction) -> dict[str, Any]:
@@ -123,8 +120,18 @@ def report_to_html(report: dict[str, Any]) -> str:
     return f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>资金证据审查底稿</title>
 <style>body{{font:14px Arial,"Microsoft YaHei",sans-serif;margin:40px;color:#202124}}h1{{font-size:22px}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #c9cdd2;padding:8px;text-align:left}}th{{background:#f3f4f6}}.notice{{border-left:4px solid #b45309;padding:10px;background:#fff7ed}}.topology-card{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:16px;margin:20px 0}}</style>
 <script type="module">
-import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-mermaid.initialize({{ startOnLoad: true }});
+(async () => {{
+  try {{
+    const mod = await import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs');
+    mod.default.initialize({{ startOnLoad: true }});
+  }} catch (e) {{
+    document.querySelectorAll('pre.mermaid').forEach(el => {{
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = '<p style="color:#b45309;font-size:12px;margin-bottom:8px;">（图谱组件加载失败，显示文本源）</p><pre style="background:#f8fafc;border:1px solid #cbd5e1;padding:12px;overflow:auto;">' + el.textContent.replace(/</g, '&lt;') + '</pre>';
+      el.parentNode.replaceChild(wrapper, el);
+    }});
+  }}
+}})();
 </script>
 <body><h1>资金证据审查底稿</h1><p class="notice">{html.escape(report['disclaimer'])}</p>
 <p>案件：{html.escape(report['case_id'])}</p><p>复核状态：<strong>{html.escape(disp_status)}</strong></p>

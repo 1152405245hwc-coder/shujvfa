@@ -15,7 +15,10 @@ from legal_funds_agent.services.case_report_service import (
     build_case_master_report,
     case_report_to_html,
 )
-from legal_funds_agent.services.evidence_conflict_service import build_evidence_conflict_matrix
+from legal_funds_agent.services.evidence_conflict_service import (
+    build_evidence_conflict_matrix,
+    showcase_conflict_matrix,
+)
 from legal_funds_agent.services.transaction_analysis import (
     identify_refund_transactions,
     unique_transactions,
@@ -192,10 +195,18 @@ class GoldCase001Test(unittest.TestCase):
             task_id="TASK-GOLD-CONFLICTS",
             allow_multiple_claims=True,
         )
-        matrix = build_evidence_conflict_matrix(result.transactions, documents)
+        # The showcase matrix is fixed presentation content for this fabricated demo case;
+        # the generic path is covered in test_evidence_conflict_matrix.py.
+        matrix = showcase_conflict_matrix(result.transactions, documents)
         self.assertEqual([item["id"] for item in matrix], ["CONFLICT-01", "CONFLICT-02", "CONFLICT-03", "CONFLICT-04"])
         self.assertIn("1,250,000.00", matrix[0]["materials"][2]["finding"])
         self.assertIn("1,268,000.00", matrix[1]["materials"][0]["finding"])
+
+        # The generic path must not be silently empty for the same case.
+        generic = build_evidence_conflict_matrix(
+            result.transactions, documents, claims=result.claims
+        )
+        self.assertTrue(generic)
 
     def test_deepseek_provider_markdown_cleanup(self):
         md_content = "```json\n{\"claims\": [{\"victim_name\": \"张三\", \"claimed_amount\": \"1000\"}]}\n```"

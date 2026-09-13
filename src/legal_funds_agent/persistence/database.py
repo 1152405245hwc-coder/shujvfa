@@ -46,7 +46,13 @@ CREATE TABLE IF NOT EXISTS investigation_items (
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(str(path))
+    connection = sqlite3.connect(str(path), timeout=30)
     connection.row_factory = sqlite3.Row
-    connection.executescript(SCHEMA)
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=5000")
+    initialized = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='claims'"
+    ).fetchone()
+    if not initialized:
+        connection.executescript(SCHEMA)
     return connection

@@ -15,6 +15,7 @@ def build_decision(claim: Claim, transactions: dict[str, Transaction], *, includ
                    reviewed_at: datetime | None = None, note: str | None = None,
                    reason_codes: list[str] | None = None, material_conflict: bool = False,
                    has_pending_candidates: bool = False,
+                   review_required_reasons: list[str] | None = None,
                    transaction_review_actions: list[TransactionReviewAction] | None = None) -> ReviewDecision:
     included = included or []
     excluded = excluded or []
@@ -30,6 +31,12 @@ def build_decision(claim: Claim, transactions: dict[str, Transaction], *, includ
     elif covered > claim.claimed_amount:
         status = ReviewStatus.CONFLICTING
         reasons = [*(reason_codes or []), "OVER_COVERED_AMOUNT"]
+    elif review_required_reasons:
+        # A missing or unusable input is not a contradiction; it is an unverified claim.
+        # PENDING_REVIEW is the honest status: the money maths may be fine, but the
+        # material check never happened.
+        status = ReviewStatus.PENDING_REVIEW
+        reasons = [*(reason_codes or []), *review_required_reasons]
     elif disputed or has_pending_candidates:
         status = ReviewStatus.PENDING_REVIEW
         reasons = [*(reason_codes or []), "DISPUTED_TRANSACTION"]

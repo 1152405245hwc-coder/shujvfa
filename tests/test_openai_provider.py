@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 from legal_funds_agent.llm.factory import provider_from_environment
@@ -77,7 +78,7 @@ class OpenAIProviderTest(unittest.TestCase):
                 ]
             })
 
-        provider = OpenAIProvider(api_key="test-only", opener=opener)
+        provider = OpenAIProvider(api_key="test-only", model="gpt-test", opener=opener)
         claims = provider.generate_structured(text="测试材料", schema_name="payment_claim_v0.1")
         self.assertEqual(claims[0]["victim_name"], "张某")
 
@@ -93,6 +94,61 @@ class OpenAIProviderTest(unittest.TestCase):
         self.assertIsInstance(provider, OpenAIProvider)
         self.assertEqual(provider.model, "gpt-test")
         self.assertEqual(provider.base_url, "https://example.invalid/v1")
+
+
+    def test_retry_on_urlerror_then_success(self):
+        call_count = 0
+
+        def opener(request, timeout):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise urllib.error.URLError("connection reset")
+            return FakeResponse({
+                "output": [{
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": json.dumps(claim_payload(), ensure_ascii=False)}],
+                }],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            })
+
+        provider = OpenAIProvider(api_key="test-only", model="gpt-test", opener=opener)
+        claims = provider.generate_structured(text="x", schema_name="payment_claim_v0.1")
+        self.assertEqual(call_count, 2)
+        self.assertEqual(claims[0]["victim_name"], "张某")
+
+    def test_retry_on_429_then_success(self):
+        call_count = 0
+
+        def opener(request, timeout):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise urllib.error.HTTPError("https://x", 429, "Too Many Requests", {}, None)
+            return FakeResponse({
+                "output": [{
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": json.dumps(claim_payload(), ensure_ascii=False)}],
+                }],
+            })
+
+        provider = OpenAIProvider(api_key="test-only", model="gpt-test", opener=opener)
+        claims = provider.generate_structured(text="x", schema_name="payment_claim_v0.1")
+        self.assertEqual(call_count, 2)
+        self.assertEqual(claims[0]["victim_name"], "张某")
+
+    def test_non_retry_http_error_raises_immediately(self):
+        call_count = 0
+
+        def opener(request, timeout):
+            nonlocal call_count
+            call_count += 1
+            raise urllib.error.HTTPError("https://x", 400, "Bad Request", {}, None)
+
+        provider = OpenAIProvider(api_key="test-only", model="gpt-test", opener=opener)
+        with self.assertRaises(RuntimeError):
+            provider.generate_structured(text="x", schema_name="payment_claim_v0.1")
+        self.assertEqual(call_count, 1)
 
 
 if __name__ == "__main__":

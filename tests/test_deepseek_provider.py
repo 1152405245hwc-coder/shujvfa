@@ -1,5 +1,6 @@
 import json
 import unittest
+import urllib.error
 
 from legal_funds_agent.llm.deepseek_provider import DeepSeekProvider
 
@@ -46,6 +47,36 @@ class DeepSeekProviderTest(unittest.TestCase):
         self.assertEqual(provider.last_call_metrics["input_tokens"], 21)
         self.assertEqual(provider.last_call_metrics["output_tokens"], 17)
         self.assertIsInstance(provider.last_call_metrics["latency_ms"], int)
+
+
+    def test_retry_on_500_then_success(self):
+        call_count = 0
+
+        def opener(request, timeout):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise urllib.error.HTTPError("https://x", 500, "Internal Error", {}, None)
+            return FakeResponse({
+                "choices": [{"message": {"content": json.dumps({"claims": []}, ensure_ascii=False)}}],
+            })
+
+        provider = DeepSeekProvider(api_key="test-only", base_url="https://example.invalid", model="model-test", opener=opener)
+        provider.generate_structured(text="x", schema_name="payment_claim_v0.1")
+        self.assertEqual(call_count, 2)
+
+    def test_non_retry_http_error_raises_immediately(self):
+        call_count = 0
+
+        def opener(request, timeout):
+            nonlocal call_count
+            call_count += 1
+            raise urllib.error.HTTPError("https://x", 400, "Bad Request", {}, None)
+
+        provider = DeepSeekProvider(api_key="test-only", base_url="https://example.invalid", model="model-test", opener=opener)
+        with self.assertRaises(RuntimeError):
+            provider.generate_structured(text="x", schema_name="payment_claim_v0.1")
+        self.assertEqual(call_count, 1)
 
 
 if __name__ == "__main__":

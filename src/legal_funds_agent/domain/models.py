@@ -103,8 +103,8 @@ class Claim(BaseModel):
     alleged_recipient_account: str | None = None
     claimed_amount: Decimal = Field(gt=Decimal("0"))
     currency: Literal["CNY"] = "CNY"
-    time_start: date
-    time_end: date
+    time_start: date | None = None
+    time_end: date | None = None
     payment_method: Literal["bank_transfer"] = "bank_transfer"
     source_locator_ids: list[str] = Field(min_length=1)
     source_locators: list[SourceLocator] = Field(default_factory=list)
@@ -112,7 +112,7 @@ class Claim(BaseModel):
 
     @model_validator(mode="after")
     def valid_dates(self):
-        if self.time_start > self.time_end:
+        if self.time_start is not None and self.time_end is not None and self.time_start > self.time_end:
             raise ValueError("time_start must not be after time_end")
         return self
 

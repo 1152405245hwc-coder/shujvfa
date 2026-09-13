@@ -70,14 +70,31 @@ def extract_text_from_scanned_pdf(pdf_bytes: bytes, max_pages: int = 50, scale: 
     return "\n\n".join(page_texts)
 
 
+def _extract_amount_candidates(text: str) -> list[str]:
+    """Return normalized numeric amount candidates from OCR text, excluding bare 4-digit years."""
+    pattern = re.compile(r"(?:金额[:：\s]*|[¥￥\-]\s*|\b(?<!\d))(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(?:元|CNY)?")
+    candidates: list[str] = []
+    for match in pattern.finditer(text):
+        number = match.group(1)
+        bare = match.group(0).strip() == number.strip()
+        if bare:
+            clean = number.replace(",", "")
+            if re.fullmatch(r"\d{4}", clean):
+                year = int(clean)
+                if 1900 <= year <= 2100:
+                    continue
+        candidates.append(number.replace(",", ""))
+    return candidates
+
+
 def parse_screenshot_transaction(text: str) -> dict[str, Any] | None:
     """Attempt to parse core financial transfer elements from OCR text of a transfer screenshot."""
     if not text:
         return None
 
     # Try matching amount (e.g. ¥50,000.00 or 50000.00元 or -50000.00)
-    amount_match = re.search(r"(?:金额[:：\s]*|[¥￥\-]\s*|\b(?<!\d))(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(?:元|CNY)?", text)
-    amount = amount_match.group(1).replace(",", "") if amount_match else None
+    candidates = _extract_amount_candidates(text)
+    amount = candidates[0] if candidates else None
 
     # Try matching payee / counterparty
     payee_match = re.search(r"(?:收款人|对方户名|转账给|转入账户|户名|收款方)[:：\s]*([\u4e00-\u9fff]{2,10}(?:某)?)", text)

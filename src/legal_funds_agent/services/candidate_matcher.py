@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from dataclasses import dataclass
+from decimal import Decimal
 
 from legal_funds_agent.domain.models import Claim, MatchLevel, Transaction
 from legal_funds_agent.services.transaction_analysis import normalize_party_name, transaction_canonical_key
@@ -67,17 +68,35 @@ def sort_candidates_for_review(
     )
 
 
-def match_claim_transactions(claim: Claim, transactions: list[Transaction], date_window_days: int = DEFAULT_DATE_WINDOW_DAYS) -> list[CandidateMatch]:
+def _party_key(value: str | None, alias_registry) -> str:
+    """Normalize a party name, then apply any human-confirmed alias mapping.
+
+    Without a registry this is exactly ``normalize_party_name``, so behaviour is
+    unchanged unless a reviewer has explicitly confirmed a merge.
+    """
+    normalized = normalize_party_name(value)
+    if alias_registry is None:
+        return normalized
+    return alias_registry.resolve(normalized)
+
+
+def match_claim_transactions(claim: Claim, transactions: list[Transaction],
+                             date_window_days: int = DEFAULT_DATE_WINDOW_DAYS,
+                             alias_registry=None) -> list[CandidateMatch]:
     candidates: list[CandidateMatch] = []
     seen_events: dict[tuple[str, str, str, str, str], set[str | None]] = {}
-    start, end = claim.time_start, claim.time_end
+    raw_start, raw_end = claim.time_start, claim.time_end
+    start = raw_start if raw_start is not None else date.min
+    end = raw_end if raw_end is not None else date.max
+    victim_key = _party_key(claim.victim_name, alias_registry)
+    recipient_key = _party_key(claim.alleged_recipient_name, alias_registry)
     for tx in transactions:
-        payer_name_exact = normalize_party_name(tx.payer_name) == normalize_party_name(claim.victim_name)
+        payer_name_exact = _party_key(tx.payer_name, alias_registry) == victim_key
         payer_account_exact = bool(claim.victim_account and tx.payer_account == claim.victim_account)
         payer_exact = payer_name_exact or payer_account_exact
         payee_name_exact = bool(
             claim.alleged_recipient_name
-            and normalize_party_name(tx.payee_name) == normalize_party_name(claim.alleged_recipient_name)
+            and _party_key(tx.payee_name, alias_registry) == recipient_key
         )
         payee_account_exact = bool(claim.alleged_recipient_account and tx.payee_account == claim.alleged_recipient_account)
         payee_account_id_exact = bool(
@@ -86,7 +105,12 @@ def match_claim_transactions(claim: Claim, transactions: list[Transaction], date
         )
         payee_exact = payee_name_exact or payee_account_exact or payee_account_id_exact
         in_range = start <= tx.date <= end
-        in_window = start - timedelta(days=date_window_days) <= tx.date <= end + timedelta(days=date_window_days)
+        if raw_start is None and raw_end is None:
+            in_window = True
+        else:
+            window_start = start - timedelta(days=date_window_days) if raw_start is not None else date.min
+            window_end = end + timedelta(days=date_window_days) if raw_end is not None else date.max
+            in_window = window_start <= tx.date <= window_end
         if not (payer_exact and in_window):
             continue
         canonical_key = transaction_canonical_key(tx)
@@ -101,13 +125,19 @@ def match_claim_transactions(claim: Claim, transactions: list[Transaction], date
         ):
             continue
         seen_events.setdefault(canonical_key, set()).add(tx.source_account_id)
-        amount_match = "EXACT" if tx.amount == claim.claimed_amount else ("PARTIAL" if tx.amount < claim.claimed_amount else "EXCEEDS")
+        if tx.amount == claim.claimed_amount:
+            amount_match = "EXACT"
+        elif tx.amount < claim.claimed_amount:
+            partial_floor = max(claim.claimed_amount * Decimal("0.01"), Decimal("100"))
+            amount_match = "PARTIAL" if tx.amount >= partial_floor else "NO_MATCH"
+        else:
+            amount_match = "EXCEEDS"
         rules = ["M01" if payer_account_exact else "M02", "M05" if in_range else "M06"]
         if payee_exact:
             rules.append("M03" if payee_account_exact or payee_account_id_exact else "M04")
         if amount_match == "EXACT": rules.append("M07")
         elif amount_match == "PARTIAL": rules.append("M08")
-        else: rules.append("M09")
+        elif amount_match == "EXCEEDS": rules.append("M09")
         risks: list[str] = []
         if claim.victim_account and tx.payer_account and claim.victim_account != tx.payer_account:
             risks.append("PAYER_ACCOUNT_MISMATCH")

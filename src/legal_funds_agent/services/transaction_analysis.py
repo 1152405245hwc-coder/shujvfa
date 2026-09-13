@@ -21,12 +21,19 @@ def normalize_account_reference(value: str | None) -> str:
     return re.sub(r"[^0-9A-Za-z*]", "", str(value)).upper()
 
 
-def transaction_canonical_key(tx: Transaction) -> tuple[str, str, str, str, str]:
+def transaction_canonical_key(tx: Transaction) -> tuple[str, str, str, str]:
     """Build a source-independent identity for one bank transfer event.
 
     Bank statement serial numbers are account-specific, so the identity is based on
-    timestamp, amount, and both canonical account endpoints. Names are a fallback
-    for legacy CSV rows that do not contain account identifiers.
+    date, amount, and both canonical account endpoints. Names are a fallback for
+    legacy CSV rows that do not contain account identifiers.
+
+    The exact clock time is intentionally excluded: the same transfer is often
+    mirrored across two accounts with different timestamp precision (one row may
+    carry a time while the mirror row does not). Treating same-date, same-amount,
+    same-endpoint rows as one canonical event prevents the same funds from being
+    double-counted as duplicates. The original transaction ids are still retained
+    inside the duplicate group for traceability.
     """
     payer = (
         tx.payer_account_id
@@ -38,14 +45,13 @@ def transaction_canonical_key(tx: Transaction) -> tuple[str, str, str, str, str]
         or normalize_account_reference(tx.payee_account)
         or normalize_party_name(tx.payee_name)
     )
-    time_text = tx.time.isoformat() if tx.time else ""
-    return str(tx.date), time_text, f"{tx.amount:.2f}", payer, payee
+    return str(tx.date), f"{tx.amount:.2f}", payer, payee
 
 
 def unique_transactions(transactions: Iterable[Transaction]) -> list[Transaction]:
     """Keep one traceable row for each canonical transfer event."""
     result: list[Transaction] = []
-    seen: set[tuple[str, str, str, str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     for tx in transactions:
         key = transaction_canonical_key(tx)
         if key in seen:

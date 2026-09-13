@@ -99,16 +99,22 @@ function ffRunLayout(cy, onDone, marker) {
 
 function ffSnapColumns(cy) {
   // Enforce the semantic columns (0 = victim / 1 = suspect / 2 = downstream)
-  // while keeping ELK's vertical ordering within each column.
+  // while keeping ELK's vertical ordering within each column. A semantic
+  // column that stacks too deep flows into two side-by-side sub-columns:
+  // wide graphs fit the viewport at a far more readable zoom than tall ones.
   const cols = [[], [], []];
   cy.nodes('[kind = "account"]').forEach((n) => cols[n.data('partition')].push(n));
-  const gapX = FF_NODE_W + 150;
+  const gapX = FF_NODE_W + 110;
   const gapY = FF_NODE_H + 48;
-  cols.forEach((col, ci) => {
+  let xOffset = 0;
+  cols.forEach((col) => {
     col.sort((a, b) => a.position('y') - b.position('y'));
+    const subCols = col.length > 6 ? 2 : 1;
+    const perCol = Math.ceil(col.length / subCols);
     col.forEach((n, i) => {
-      n.position({ x: ci * gapX, y: i * gapY });
+      n.position({ x: xOffset + Math.floor(i / perCol) * gapX, y: (i % perCol) * gapY });
     });
+    xOffset += subCols * gapX;
   });
 }
 
@@ -191,8 +197,8 @@ function ffFitWhenReady(cy, container) {
     // readability floor: on dense graphs fit() can shrink text below a usable
     // size; prefer a readable zoom centred on the fund source over showing
     // everything at once.
-    if (cy.zoom() < 0.5) {
-      cy.zoom(0.5);
+    if (cy.zoom() < 0.45) {
+      cy.zoom(0.45);
       const victim = cy.nodes('[display_role = "victim"]').first();
       if (victim && victim.length) cy.center(victim); else cy.center();
     }
@@ -432,6 +438,27 @@ export default function (component) {
         selector: 'edge:selected',
         style: { 'line-style': 'solid' },
       },
+      {
+        selector: '.ff-dim',
+        style: { opacity: 0.12, 'text-opacity': 0.3 },
+      },
+      {
+        selector: 'node.ff-neighbor',
+        style: {
+          'border-color': FF_COLORS.navy,
+          'border-width': 2,
+          'background-color': '#eef3f8',
+        },
+      },
+      {
+        selector: 'edge.ff-neighbor',
+        style: {
+          opacity: 1,
+          'z-index': 20,
+          'text-background-color': '#fdf3dd',
+          'text-background-opacity': 1,
+        },
+      },
     ],
   });
 
@@ -442,6 +469,16 @@ export default function (component) {
     ffAddAccents(cy);
     ffRouteRefunds(cy);
     ffFitWhenReady(cy, canvas);
+    // Clicking an element triggers a Streamlit rerun, which remounts this
+    // component; Python echoes the current selection back in the payload so
+    // the focus highlight survives the remount.
+    if (payload.selected && payload.selected.id) {
+      const el = cy.getElementById(payload.selected.id);
+      if (el && el.length) {
+        el.select();
+        ffApplyFocus(el);
+      }
+    }
   }, (mode) => {
     root.dataset.ffLayout = mode;
   });
@@ -518,7 +555,28 @@ export default function (component) {
   cy.on('mousemove', 'edge', moveTip);
   cy.on('mouseout', 'edge', () => { tip.style.display = 'none'; });
 
+  // Focus the selected element's neighborhood: keep the selected node/edge,
+  // its connected edges and neighbor accounts (plus their accent rules) at
+  // full contrast, and dim everything else so one subject's fund movement can
+  // be read in isolation.
+  function ffApplyFocus(target) {
+    cy.elements().removeClass('ff-dim ff-neighbor');
+    if (!target) return;
+    let keep = target.isNode()
+      ? target.closedNeighborhood()
+      : target.union(target.source()).union(target.target());
+    keep.forEach((el) => {
+      if (el.isNode && el.isNode() && el.data('kind') === 'account') {
+        const accent = el.data('_accent');
+        if (accent) keep = keep.union(accent);
+      }
+    });
+    cy.elements().difference(keep).addClass('ff-dim');
+    keep.forEach((el) => { if (el !== target) el.addClass('ff-neighbor'); });
+  }
+
   cy.on('tap', 'node[kind = "account"]', (evt) => {
+    ffApplyFocus(evt.target);
     const d = evt.target.data();
     setStateValue('selection', {
       type: 'node',
@@ -532,6 +590,7 @@ export default function (component) {
     });
   });
   cy.on('tap', 'edge', (evt) => {
+    ffApplyFocus(evt.target);
     const d = evt.target.data();
     setStateValue('selection', {
       type: 'edge',
@@ -547,7 +606,10 @@ export default function (component) {
     });
   });
   cy.on('tap', (evt) => {
-    if (evt.target === cy) setStateValue('selection', null);
+    if (evt.target === cy) {
+      ffApplyFocus(null);
+      setStateValue('selection', null);
+    }
   });
 
   return () => {

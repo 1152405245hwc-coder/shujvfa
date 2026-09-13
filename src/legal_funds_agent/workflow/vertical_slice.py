@@ -17,9 +17,18 @@ from legal_funds_agent.domain.models import (
 )
 from legal_funds_agent.llm.mock_provider import MockProvider
 from legal_funds_agent.llm.base import LLMProvider
+from legal_funds_agent.llm.provenance import prompt_fingerprint
+from legal_funds_agent.llm.schemas import (
+    SCHEMA_CLAIM_AUDIT,
+    SCHEMA_PAYMENT_CLAIM,
+    SCHEMA_STATEMENT_FACT,
+)
 from legal_funds_agent.parsers.transaction_csv_parser import parse_transactions
 from legal_funds_agent.services.candidate_matcher import CandidateMatch, match_claim_transactions
+from legal_funds_agent.services.claim_audit import ClaimAuditResult, audit_claim_extraction
 from legal_funds_agent.services.claim_extractor import extract_claims
+from legal_funds_agent.services.extraction_guard import collect_claim_anchoring_issues
+from legal_funds_agent.services.entity_resolution import PartyAliasRegistry
 from legal_funds_agent.services.report_service import build_report
 from legal_funds_agent.services.review_engine import build_decision
 from legal_funds_agent.services.statement_extractor import (
@@ -35,7 +44,7 @@ class WorkflowResult:
     task_id: str
     claim: Claim
     claim_locators: list[SourceLocator]
-    statement_fact: StatementPaymentFact
+    statement_fact: StatementPaymentFact | None
     statement_conflicts: list[str]
     duplicate_groups: dict[str, list[str]]
     transactions: dict[str, Transaction]
@@ -45,6 +54,18 @@ class WorkflowResult:
     claims: list[Claim] = field(default_factory=list)
     candidates_by_claim: dict[str, list[CandidateMatch]] = field(default_factory=dict)
     system_decisions_by_claim: dict[str, ReviewDecision] = field(default_factory=dict)
+    # Extraction-quality signals. These never feed the deterministic money decision;
+    # they exist so that a weak extraction is visible instead of silently accepted.
+    extraction_issues: list[dict] = field(default_factory=list)
+    statement_extraction_warnings: list[str] = field(default_factory=list)
+    claim_audit: ClaimAuditResult | None = None
+    # Reasons that force PENDING_REVIEW without asserting a contradiction, e.g. an
+    # unusable victim statement. Recorded separately from statement_conflicts so that
+    # "we could not check" is never dressed up as "the materials disagree".
+    review_required_reasons: list[str] = field(default_factory=list)
+    # Human-confirmed party merges, recorded so the report can always answer
+    # "why were these two names treated as one person".
+    alias_registry: PartyAliasRegistry | None = None
 
 
 
@@ -66,6 +87,11 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
                     case_id: str = "CASE-0001", task_id: str = "TASK-0001",
                     provider: LLMProvider | None = None,
                     allow_multiple_claims: bool = False,
+                    statement_provider: LLMProvider | None = None,
+                    enable_claim_audit: bool = False,
+                    audit_provider: LLMProvider | None = None,
+                    allow_missing_statement: bool = False,
+                    alias_registry: PartyAliasRegistry | None = None,
                     transaction_evidence_id: str = "EVI-BANK-CSV") -> WorkflowResult:
     logs: list[AuditEvent] = []
     provider = provider or MockProvider()
@@ -75,7 +101,7 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
             indictment_text, case_id=case_id, evidence_id="EVI-INDICTMENT", provider=provider
         )
         if not claims:
-            raise ValueError("No PaymentClaim extracted from indictment")
+            raise ValueError("未能从起诉书中提取到资金主张，请检查起诉书文本或材料上传是否完整")
         if not allow_multiple_claims and len(claims) != 1:
             raise ValueError("V0.1 MVP currently supports exactly one PaymentClaim")
         claim = claims[0]
@@ -86,14 +112,48 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
             input_hash=_hash_text(indictment_text), output_hash=_hash_text(claim.model_dump_json()),
             input_tokens=metrics.get("input_tokens"), output_tokens=metrics.get("output_tokens"),
             latency_ms=metrics.get("latency_ms"),
+            details={"prompt_sha256": prompt_fingerprint(SCHEMA_PAYMENT_CLAIM)},
         ))
 
+        # Extraction-quality guard: a claim amount must have a literal basis inside the
+        # span the model cited. This is a review signal, not a funds-review risk, so it
+        # deliberately stays out of system_risks and the money decision.
+        extraction_issues = collect_claim_anchoring_issues(claims)
+        if extraction_issues:
+            logs.append(completed_event(
+                task_id, case_id, "extraction_guard", "extraction_guard_v0.1",
+                datetime.now(timezone.utc), details={"issues": extraction_issues},
+            ))
+
         step, tool, started, step_input = "statement_comparison", "statement_parser_v0.1", datetime.now(timezone.utc), statement_text
-        statement_fact = extract_statement_payment(statement_text, victim_name=claim.victim_name)
-        statement_conflicts = compare_statement_to_claim(statement_fact, claim)
+        statement_warnings: list[str] = []
+        statement_fact = extract_statement_payment(
+            statement_text, victim_name=claim.victim_name,
+            provider=statement_provider, warnings=statement_warnings,
+            allow_missing=allow_missing_statement,
+        )
+        if statement_fact is None:
+            statement_conflicts = []
+            review_required_reasons = ["STATEMENT_FACT_UNAVAILABLE"]
+        else:
+            statement_conflicts = compare_statement_to_claim(statement_fact, claim)
+            review_required_reasons = []
+        statement_metrics = getattr(statement_provider, "last_call_metrics", {}) if statement_provider else {}
         logs.append(completed_event(
             task_id, case_id, step, tool, started,
+            model=statement_provider.name if statement_provider else None,
+            prompt_version=getattr(statement_provider, "prompt_version", None) if statement_provider else None,
             input_hash=_hash_text(statement_text), output_hash=_hash_text("|".join(statement_conflicts)),
+            input_tokens=statement_metrics.get("input_tokens"),
+            output_tokens=statement_metrics.get("output_tokens"),
+            latency_ms=statement_metrics.get("latency_ms"),
+            details={
+                "extraction_source": statement_fact.extraction_source if statement_fact else None,
+                "warnings": statement_warnings,
+                "prompt_sha256": (
+                    prompt_fingerprint(SCHEMA_STATEMENT_FACT) if statement_provider else None
+                ),
+            },
         ))
 
         step, tool, started, step_input = "transaction_parser", "csv_parser_v0.1", datetime.now(timezone.utc), csv_text
@@ -108,16 +168,17 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
         step, tool, started, step_input = "candidate_matcher", "candidate_matcher_v0.1", datetime.now(timezone.utc), claim.model_dump_json()
         candidates_by_claim: dict[str, list[CandidateMatch]] = {}
         system_decisions_by_claim: dict[str, ReviewDecision] = {}
-        system_risks = list(statement_conflicts)
-        if duplicate_groups:
-            system_risks.append("DUPLICATE_TRANSACTION")
+        duplicate_risk = ["DUPLICATE_TRANSACTION"] if duplicate_groups else []
 
         for c in claims:
-            c_candidates = match_claim_transactions(c, transactions)
+            c_conflicts = compare_statement_to_claim(statement_fact, c) if statement_fact else []
+            c_risks = list(c_conflicts) + duplicate_risk
+            c_candidates = match_claim_transactions(c, transactions, alias_registry=alias_registry)
             candidates_by_claim[c.id] = c_candidates
             c_decision = build_decision(
                 c, tx_index, has_pending_candidates=bool(c_candidates),
-                material_conflict=bool(system_risks), reason_codes=system_risks,
+                material_conflict=bool(c_risks), reason_codes=c_risks,
+                review_required_reasons=review_required_reasons,
             )
             system_decisions_by_claim[c.id] = c_decision
 
@@ -127,6 +188,37 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
             task_id, case_id, step, tool, started,
             input_hash=_hash_text(step_input), output_hash=_hash_text(str(candidates)),
         ))
+
+        # Adversarial second pass for missed claims. Its output is a review queue only:
+        # a suspected omission never becomes a Claim on its own.
+        if alias_registry is not None and len(alias_registry):
+            logs.append(completed_event(
+                task_id, case_id, "party_alias", "entity_resolution_v0.1",
+                datetime.now(timezone.utc), details=alias_registry.to_dict(),
+            ))
+
+        claim_audit: ClaimAuditResult | None = None
+        if enable_claim_audit:
+            audit_started = datetime.now(timezone.utc)
+            claim_audit_provider = audit_provider or provider
+            claim_audit = audit_claim_extraction(
+                indictment_text=indictment_text, claims=claims,
+                provider=claim_audit_provider, case_id=case_id,
+            )
+            audit_metrics = getattr(claim_audit_provider, "last_call_metrics", {}) or {}
+            logs.append(completed_event(
+                task_id, case_id, "claim_audit", "claim_audit_v0.1", audit_started,
+                model=claim_audit.provider,
+                input_tokens=audit_metrics.get("input_tokens"),
+                output_tokens=audit_metrics.get("output_tokens"),
+                latency_ms=audit_metrics.get("latency_ms"),
+                details={
+                    "checked": claim_audit.checked,
+                    "missing_count": len(claim_audit.missing_claims),
+                    "notes": claim_audit.notes,
+                    "prompt_sha256": prompt_fingerprint(SCHEMA_CLAIM_AUDIT),
+                },
+            ))
     except Exception as exc:
         logs.append(failed_event(
             task_id, case_id, step, tool, started, exc,
@@ -148,6 +240,11 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
         claims=claims,
         candidates_by_claim=candidates_by_claim,
         system_decisions_by_claim=system_decisions_by_claim,
+        extraction_issues=extraction_issues,
+        statement_extraction_warnings=statement_warnings,
+        claim_audit=claim_audit,
+        review_required_reasons=review_required_reasons,
+        alias_registry=alias_registry,
     )
 
 

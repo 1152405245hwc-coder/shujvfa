@@ -14,7 +14,12 @@ SUPPORTED_TRANSACTION_EXTENSIONS = {".csv", ".xlsx", ".xlsm", ".pdf"} | IMAGE_EX
 
 
 def _decode_text(data: bytes) -> str:
-    return data.decode("utf-8-sig")
+    for encoding in ("utf-8-sig", "gb18030"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError("无法识别文件编码：请使用 UTF-8 或 GBK/GB18030 编码的 CSV/文本文件")
 
 
 def extract_document_text(data: bytes, *, filename: str) -> str:
@@ -61,14 +66,19 @@ def extract_document_text(data: bytes, *, filename: str) -> str:
     return text
 
 
-def extract_transactions_csv(data: bytes, *, filename: str) -> str:
-    """Return canonical transaction CSV from CSV, common bank XLSX layouts, or transfer screenshots."""
+def extract_transactions_csv_detailed(data: bytes, *, filename: str) -> tuple[str, dict[str, int]]:
+    """Return canonical transaction CSV and skip statistics from CSV, common bank XLSX layouts, or transfer screenshots."""
+    skip_stats: dict[str, int] = {
+        "invalid_direction": 0,
+        "invalid_datetime": 0,
+        "invalid_amount_or_counterparty": 0,
+    }
     suffix = _suffix(filename)
     if suffix == ".csv":
         text = _decode_text(data)
         if not text.strip():
             raise ValueError("CSV文件为空")
-        return text
+        return text, skip_stats
     if suffix in IMAGE_EXTENSIONS:
         try:
             from legal_funds_agent.parsers.ocr_service import extract_text_from_image, parse_screenshot_transaction
@@ -79,14 +89,14 @@ def extract_transactions_csv(data: bytes, *, filename: str) -> str:
         if not parsed:
             raise ValueError("未能从转账截图中识别出有效交易要素（金额/收款人）")
         time_val = parsed.get("time", "")
-        date_str = time_val[:10] if len(time_val) >= 10 else "2026-03-15"
-        time_str = time_val[11:19] if len(time_val) >= 19 else "12:00:00"
+        date_str = time_val[:10] if len(time_val) >= 10 else ""
+        time_str = time_val[11:19] if len(time_val) >= 19 else ""
         return (
             "transaction_id,date,time,payer,payer_account,payee,payee_account,amount,remark\n"
-            f"{parsed['transaction_id']},{date_str},{time_str},被害人,,{parsed['payee']},,{parsed['amount']},转账截图识别\n"
-        )
+            f"{parsed['transaction_id']},{date_str},{time_str},,,{parsed['payee']},,{parsed['amount']},转账截图识别\n"
+        ), skip_stats
     if suffix == ".pdf":
-        return extract_bank_pdf_transactions(data)
+        return extract_bank_pdf_transactions(data), skip_stats
     if suffix not in {".xlsx", ".xlsm"}:
         raise ValueError(f"不支持的流水格式: {suffix or '无扩展名'}")
     try:
@@ -130,13 +140,16 @@ def extract_transactions_csv(data: bytes, *, filename: str) -> str:
                 continue
             direction = _clean_cell(raw[mapping["direction"]])
             if direction not in {"收入", "支出", "入", "出", "贷", "借"}:
+                skip_stats["invalid_direction"] += 1
                 continue
             parsed_time = _parse_datetime(raw[mapping["date_time"]])
             if parsed_time is None:
+                skip_stats["invalid_datetime"] += 1
                 continue
             counterparty = _clean_cell(raw[mapping["counterparty"]])
             amount = _number(raw[mapping["amount"]])
             if not counterparty or amount is None:
+                skip_stats["invalid_amount_or_counterparty"] += 1
                 continue
             incoming = direction in {"收入", "入", "贷"}
             counterparty_info = _parse_counterparty(counterparty, account_registry)
@@ -167,7 +180,13 @@ def extract_transactions_csv(data: bytes, *, filename: str) -> str:
     writer = csv.DictWriter(output, fieldnames=["transaction_id", "date", "time", "payer", "payer_account", "payee", "payee_account", "amount", "remark", "payer_account_id", "payee_account_id", "source_account_id", "source_row"])
     writer.writeheader()
     writer.writerows(rows)
-    return output.getvalue()
+    return output.getvalue(), skip_stats
+
+
+def extract_transactions_csv(data: bytes, *, filename: str) -> str:
+    """Return canonical transaction CSV from CSV, common bank XLSX layouts, or transfer screenshots."""
+    text, _ = extract_transactions_csv_detailed(data, filename=filename)
+    return text
 
 
 def _suffix(filename: str) -> str:

@@ -12,10 +12,13 @@ def provider_from_environment(provider_name: str | None = None):
     if name == "mock":
         return MockProvider()
     if name == "openai":
+        model = os.getenv("OPENAI_MODEL")
+        if not model:
+            raise ValueError("OPENAI_MODEL environment variable is required when LLM_PROVIDER=openai")
         return OpenAIProvider(
             api_key=os.getenv("OPENAI_API_KEY", ""),
             base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            model=model,
         )
     if name == "deepseek":
         return DeepSeekProvider(

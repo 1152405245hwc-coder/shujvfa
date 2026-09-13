@@ -8,6 +8,7 @@ output/*
 .streamlit/
 .pytest_cache/
 .review_render/
+.workbuddy-ai/
 *.db
 *.egg-info/
 .streamlit_*.log

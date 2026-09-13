@@ -1,5 +1,5 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ws = New-Object -ComObject WScript.Shell; $desktop = [Environment]::GetFolderPath('Desktop'); $s = $ws.CreateShortcut(\"$desktop\èµ„é‡‘é“¾è¯å®¡ç³»ç»Ÿ.lnk\"); $s.TargetPath = '%~dp0åŒå‡»å¯åŠ¨.bat'; $s.WorkingDirectory = '%~dp0'; $s.Save(); Write-Host '[SUCCESS] Desktop shortcut created successfully!' -ForegroundColor Green"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ws = New-Object -ComObject WScript.Shell; $desktop = [Environment]::GetFolderPath('Desktop'); $s = $ws.CreateShortcut(\"$desktop\\×Ê½ğÁ´Ö¤ÉóÏµÍ³.lnk\"); $s.TargetPath = '%~dp0Ë«»÷Æô¶¯.bat'; $s.WorkingDirectory = '%~dp0'; $s.Save(); Write-Host '[SUCCESS] ×ÀÃæ¿ì½İ·½Ê½ÒÑ´´½¨£º×Ê½ğÁ´Ö¤ÉóÏµÍ³.lnk' -ForegroundColor Green"
 pause

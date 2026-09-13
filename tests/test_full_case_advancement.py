@@ -198,6 +198,28 @@ class FullCaseAdvancementTest(unittest.TestCase):
         self.assertEqual(restored[0].duration_ms, 1000)
         self.assertEqual(restored[0].details, {"included_count": 15})
 
+    def test_repository_preserves_missing_audit_timestamps(self):
+        conn = connect(":memory:")
+        repo = Repository(conn)
+        event = AuditEvent(
+            task_id="TASK-RESTORE-NO-TIME",
+            case_id="CASE-RESTORE-AUDIT-NO-TIME",
+            step="human_review",
+            started_at=None,
+            finished_at=None,
+            duration_ms=0,
+            tool="manual_review_v0.1",
+            status="success",
+            details={},
+        )
+        repo.save_audit_events([event])
+
+        restored = repo.load_case_audit_events("CASE-RESTORE-AUDIT-NO-TIME")
+
+        self.assertEqual(len(restored), 1)
+        self.assertIsNone(restored[0].started_at)
+        self.assertIsNone(restored[0].finished_at)
+
 
 if __name__ == "__main__":
     unittest.main()

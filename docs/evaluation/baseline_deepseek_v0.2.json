@@ -1,0 +1,339 @@
+{
+  "schema_version": "0.1.0",
+  "provider": "deepseek-chat",
+  "provenance": {
+    "captured_at": "2026-09-12T14:43:45.626356+00:00",
+    "roles": {
+      "claim_extraction": {
+        "provider": "deepseek-chat",
+        "model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com",
+        "floating_alias": true,
+        "declared_schemas": [
+          "payment_claim_v0.1",
+          "statement_fact_v0.1",
+          "claim_audit_v0.1"
+        ],
+        "offline": false
+      },
+      "statement_extraction": {
+        "provider": "deepseek-chat",
+        "model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com",
+        "floating_alias": true,
+        "declared_schemas": [
+          "payment_claim_v0.1",
+          "statement_fact_v0.1",
+          "claim_audit_v0.1"
+        ],
+        "offline": false
+      },
+      "claim_audit": {
+        "provider": "deepseek-chat",
+        "model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com",
+        "floating_alias": true,
+        "declared_schemas": [
+          "payment_claim_v0.1",
+          "statement_fact_v0.1",
+          "claim_audit_v0.1"
+        ],
+        "offline": false
+      }
+    },
+    "prompt_fingerprints": {
+      "payment_claim_v0.1": "6dd86a8dfc54972a33335126f6c0138ee975ef15d626a0c7bb070349eddfdf96",
+      "statement_fact_v0.1": "70aab61b9c1f23e46416c7fd5215e2389958e1c6a81bb0f711c5c0774d4d2c53",
+      "claim_audit_v0.1": "7ac950808d9af0f4f4202c3c3bb3ca65caea1eedff7ecde69c9732e5588be9f5"
+    },
+    "remote_calls": true,
+    "note": "模型名为浮动别名时，服务端版本可能随时变更；本记录仅对该次调用时点有效，不能用于证明历史结论可复现。"
+  },
+  "summary": {
+    "declared_cases": 5,
+    "evaluated_cases": 5,
+    "passed_cases": 5,
+    "case_pass_rate": 1.0,
+    "check_pass_rate": 1.0,
+    "format_pass_rate": 1.0,
+    "total_input_tokens": 805,
+    "total_output_tokens": 425,
+    "average_latency_ms": 946.0,
+    "statement_model_cases": 5,
+    "statement_degraded_cases": 0,
+    "extraction_issue_total": 0,
+    "claim_audit_missing_total": 0,
+    "all_calls_model_calls": 15,
+    "all_calls_input_tokens": 3315,
+    "all_calls_output_tokens": 805,
+    "all_calls_latency_ms": 13337
+  },
+  "cases": [
+    {
+      "id": "G01",
+      "title": "单笔部分覆盖",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-G01-T001"
+        ],
+        "system_status": "PENDING_REVIEW",
+        "human_status": "PARTIALLY_CORROBORATED",
+        "covered_amount": "30000.00",
+        "uncovered_amount": "20000.00",
+        "disputed_amount": "0",
+        "risk_codes": [],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 161,
+        "output_tokens": 85,
+        "latency_ms": 964
+      },
+      "metrics_all_calls": {
+        "model_calls": 3,
+        "input_tokens": 663,
+        "output_tokens": 161,
+        "latency_ms": 2421
+      },
+      "statement_extraction_source": "deepseek-chat:statement_fact_v0.1",
+      "review_required_reasons": [],
+      "statement_extraction_warnings": [],
+      "extraction_issues": [],
+      "claim_audit": {
+        "checked": true,
+        "missing_count": 0,
+        "missing_claims": [],
+        "notes": []
+      },
+      "error": null
+    },
+    {
+      "id": "G02",
+      "title": "两笔拆分完整覆盖",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-G02-T001",
+          "TX-G02-T002"
+        ],
+        "system_status": "PENDING_REVIEW",
+        "human_status": "FULLY_CORROBORATED",
+        "covered_amount": "50000.00",
+        "uncovered_amount": "0.00",
+        "disputed_amount": "0",
+        "risk_codes": [],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 161,
+        "output_tokens": 85,
+        "latency_ms": 691
+      },
+      "metrics_all_calls": {
+        "model_calls": 3,
+        "input_tokens": 663,
+        "output_tokens": 161,
+        "latency_ms": 2327
+      },
+      "statement_extraction_source": "deepseek-chat:statement_fact_v0.1",
+      "review_required_reasons": [],
+      "statement_extraction_warnings": [],
+      "extraction_issues": [],
+      "claim_audit": {
+        "checked": true,
+        "missing_count": 0,
+        "missing_claims": [],
+        "notes": []
+      },
+      "error": null
+    },
+    {
+      "id": "G03",
+      "title": "重复流水阻断重复计入",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-G03-T001",
+          "TX-G03-T002"
+        ],
+        "system_status": "CONFLICTING",
+        "human_status": "FULLY_CORROBORATED",
+        "covered_amount": "50000.00",
+        "uncovered_amount": "0.00",
+        "disputed_amount": "0",
+        "risk_codes": [],
+        "duplicate_group_count": 1,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 161,
+        "output_tokens": 85,
+        "latency_ms": 626
+      },
+      "metrics_all_calls": {
+        "model_calls": 3,
+        "input_tokens": 663,
+        "output_tokens": 161,
+        "latency_ms": 2368
+      },
+      "statement_extraction_source": "deepseek-chat:statement_fact_v0.1",
+      "review_required_reasons": [],
+      "statement_extraction_warnings": [],
+      "extraction_issues": [],
+      "claim_audit": {
+        "checked": true,
+        "missing_count": 0,
+        "missing_claims": [],
+        "notes": []
+      },
+      "error": null
+    },
+    {
+      "id": "G04",
+      "title": "起诉书与陈述金额冲突",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-G04-T001"
+        ],
+        "system_status": "CONFLICTING",
+        "human_status": "CONFLICTING",
+        "covered_amount": "30000.00",
+        "uncovered_amount": "20000.00",
+        "disputed_amount": "0",
+        "risk_codes": [
+          "STATEMENT_AMOUNT_CONFLICT"
+        ],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 161,
+        "output_tokens": 85,
+        "latency_ms": 1090
+      },
+      "metrics_all_calls": {
+        "model_calls": 3,
+        "input_tokens": 663,
+        "output_tokens": 161,
+        "latency_ms": 3291
+      },
+      "statement_extraction_source": "deepseek-chat:statement_fact_v0.1",
+      "review_required_reasons": [],
+      "statement_extraction_warnings": [],
+      "extraction_issues": [],
+      "claim_audit": {
+        "checked": true,
+        "missing_count": 0,
+        "missing_claims": [],
+        "notes": []
+      },
+      "error": null
+    },
+    {
+      "id": "G05",
+      "title": "第三方账户收款",
+      "passed": true,
+      "format_valid": true,
+      "checks": {
+        "candidate_ids": true,
+        "system_status": true,
+        "human_status": true,
+        "covered_amount": true,
+        "uncovered_amount": true,
+        "disputed_amount": true,
+        "risk_codes": true,
+        "duplicate_group_count": true,
+        "source_reference": true
+      },
+      "actual": {
+        "candidate_ids": [
+          "TX-G05-T001"
+        ],
+        "system_status": "PENDING_REVIEW",
+        "human_status": "PENDING_REVIEW",
+        "covered_amount": "0",
+        "uncovered_amount": "50000.00",
+        "disputed_amount": "50000.00",
+        "risk_codes": [
+          "THIRD_PARTY_RECIPIENT"
+        ],
+        "duplicate_group_count": 0,
+        "source_reference_valid": true
+      },
+      "metrics": {
+        "input_tokens": 161,
+        "output_tokens": 85,
+        "latency_ms": 1359
+      },
+      "metrics_all_calls": {
+        "model_calls": 3,
+        "input_tokens": 663,
+        "output_tokens": 161,
+        "latency_ms": 2930
+      },
+      "statement_extraction_source": "deepseek-chat:statement_fact_v0.1",
+      "review_required_reasons": [],
+      "statement_extraction_warnings": [],
+      "extraction_issues": [],
+      "claim_audit": {
+        "checked": true,
+        "missing_count": 0,
+        "missing_claims": [],
+        "notes": []
+      },
+      "error": null
+    }
+  ]
+}

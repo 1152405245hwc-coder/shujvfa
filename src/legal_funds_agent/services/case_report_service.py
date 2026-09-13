@@ -3,23 +3,63 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import re
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from legal_funds_agent.domain.models import Claim, ReviewDecision, Transaction
+from legal_funds_agent.llm.base import LLMProvider
+from legal_funds_agent.llm.schemas import (
+    SCHEMA_INVESTIGATION_NOTE,
+    build_investigation_note_input,
+    supports_schema,
+)
 from legal_funds_agent.services.verification_engine import CaseReviewSummary, summarize_case_reviews
 from legal_funds_agent.services.topology_service import build_fund_flow_topology, generate_mermaid_graph
 from legal_funds_agent.services.transaction_analysis import identify_refund_transactions
 
 DISCLAIMER = "本结果仅反映当前导入材料之间的资金证据对应与闭环覆盖情况，不替代司法机关的最终定罪量刑与犯罪金额认定。"
 
+# Human-readable labels for the fixed reason codes. They belong in the workbook text:
+# a printed judicial worksheet should not show a raw enum like THIRD_PARTY_RECIPIENT.
+REASON_CODE_LABELS = {
+    "MATCHED_CLAIM": "吻合起诉指控事实",
+    "THIRD_PARTY_RECIPIENT": "第三方账户代收代转",
+    "DUPLICATE_TRANSACTION": "重复记账/镜像流水",
+    "UNRELATED_TRANSACTION": "与本案无关的日常交易",
+    "ACCOUNT_MISMATCH": "非涉案指定账户",
+    "AMOUNT_MISMATCH": "金额存在出入",
+    "DATE_MISMATCH": "超出案发时间跨度",
+    "OTHER": "其他经办人说明事项",
+}
 
-def _mask_account(value: str | None) -> str | None:
-    if not value:
-        return value
-    clean = str(value).strip()
-    return "*" * max(len(clean) - 4, 0) + clean[-4:]
+
+def reason_label(code: str | None) -> str:
+    if not code:
+        return ""
+    return REASON_CODE_LABELS.get(code, code)
+
+
+# Same idea as REASON_CODE_LABELS: a printed workbook must read as Chinese prose, and the
+# model needs the labels too so it does not echo raw enums into the narrative.
+DISPOSITION_LABELS = {
+    "INCLUDED": "采信纳入",
+    "DISPUTED": "列为争议",
+    "EXCLUDED": "予以排除",
+    "PENDING": "待核验",
+}
+
+REVIEW_STATUS_LABELS = {
+    "FULLY_CORROBORATED": "资金证据完整覆盖",
+    "PARTIALLY_CORROBORATED": "资金证据部分印证",
+    "CONFLICTING": "证据材料存在矛盾",
+    "UNSUPPORTED": "暂无流水证据支持",
+    "PENDING_REVIEW": "待人工复核",
+}
+
+
+from legal_funds_agent.utils import mask_account as _mask_account
 
 
 def _evidence_ref_label(refs: list[dict[str, Any]]) -> str:
@@ -52,13 +92,23 @@ def generate_investigation_checklist(
     summary: CaseReviewSummary,
     transactions: dict[str, Transaction],
     claim_locators: list[SourceLocator] | None = None,
+    *,
+    extraction_issues: list[dict[str, Any]] | None = None,
+    missing_claims: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Automatically generate investigation and evidence checklist for prosecutors/investigators."""
+    """Automatically generate investigation and evidence checklist for prosecutors/investigators.
+
+    Extraction-quality signals are folded in as actionable items: a claim whose amount
+    cannot be anchored in its own citation, and a suspected omission found by the
+    adversarial second pass, are both things a human should go and check — not footnotes
+    that quietly disappear when the case is exported.
+    """
     checklist: list[dict[str, Any]] = []
     locator_by_id = {locator.label: locator for locator in (claim_locators or []) if locator.label}
 
     def base_item(item_id: str, category: str, priority: str, target: str,
-                  suggestion: str, refs: list[dict[str, Any]], next_action: str) -> dict[str, Any]:
+                  suggestion: str, refs: list[dict[str, Any]], next_action: str,
+                  facts: dict[str, Any] | None = None) -> dict[str, Any]:
         return {
             "item_id": item_id,
             "category": category,
@@ -69,6 +119,11 @@ def generate_investigation_checklist(
             "next_action": next_action,
             "evidence_refs": refs,
             "source_locator": _evidence_ref_label(refs),
+            # Structured numbers behind the wording. ``polish_investigation_checklist``
+            # uses this as the allow-list: the model may reword, but it may not
+            # introduce a number that is not already here.
+            "facts": facts or {},
+            "wording_source": "template",
         }
 
     # 1. Uncovered Amount / Gap checks
@@ -94,6 +149,14 @@ def generate_investigation_checklist(
                     f"并向对应金融机构调取缺失时间段（{claim.time_start} 前后）的对手信息明细。"
                     ), refs,
                     "回查主张原文，确认缺口金额后向被害人及对应金融机构发起补证。",
+                    facts={
+                        "claim_id": claim.id,
+                        "victim_name": claim.victim_name,
+                        "claimed_amount": f"{claim.claimed_amount:,.2f}",
+                        "covered_amount": f"{(decision.covered_amount if decision else Decimal('0')):,.2f}",
+                        "uncovered_amount": f"{uncovered:,.2f}",
+                        "time_start": str(claim.time_start),
+                    },
                 ),
             })
 
@@ -103,17 +166,24 @@ def generate_investigation_checklist(
             if action.disposition == "DISPUTED":
                 tx = transactions.get(action.transaction_id)
                 tx_info = f"流水号 {tx.transaction_id}（¥{tx.amount:,.2f}，收款人：{tx.payee_name}）" if tx else f"流水号 {action.transaction_id}"
-                reason = action.reason_code or "存在争议"
+                reason = reason_label(action.reason_code) or "存在争议"
                 checklist.append({
                     **base_item(
                         f"INV-{claim_id}-{action.transaction_id}-DISPUTED", "第三方账户争议核查", "中",
                         tx_info,
                         (
-                        f"该笔交易因【{reason}】被列入争议项。建议调取收款账户开户人身份信息，"
+                        f"该笔交易因「{reason}」被列入争议项。建议调取收款账户开户人身份信息，"
                         f"核查该收款人与犯罪嫌疑人之间是否存在关联、借用卡、代收或资金二次分流事实。"
                         ),
                         [_transaction_evidence_ref(tx)] if tx else [],
                         "打开原始流水对应行，核对开户人、实际控制人及后续分流记录。",
+                        facts={
+                            "transaction_id": action.transaction_id,
+                            "amount": f"{tx.amount:,.2f}" if tx else "",
+                            "payee_name": (tx.payee_name if tx else "") or "",
+                            "reason_code": action.reason_code,
+                            "reason_label": reason,
+                        },
                     ),
                 })
 
@@ -126,8 +196,54 @@ def generate_investigation_checklist(
                     f"发现跨主张冲突错误【{err}】，存在同一笔流水被重复计入多个涉案事实主张的风险，必须纠正并保持独占核销。",
                     [],
                     "定位冲突流水，撤销重复归属后重新签署受影响主张。",
+                    facts={"error_code": err},
                 ),
             })
+
+    # 4. Extraction-quality: a claim amount with no literal basis in its own citation
+    for issue in extraction_issues or []:
+        codes = "、".join(issue.get("issues") or [])
+        checklist.append({
+            **base_item(
+                f"INV-{issue.get('claim_id', 'CLAIM')}-ANCHOR", "主张金额锚定复核", "高",
+                f"主张 {issue.get('claim_id', '')}（¥{issue.get('claimed_amount', '')}）",
+                (
+                    f"提取质量校验未通过（{codes}）：该主张金额无法在其引用的原文片段中逐字找到依据。"
+                    f"若金额系由原文其他数字推导或换算得出，必须补录原始材料或由人工确认，"
+                    f"否则不得作为资金覆盖依据。"
+                ),
+                [],
+                issue.get("next_action") or "回查主张原文，确认金额出处。",
+                facts={
+                    "claim_id": issue.get("claim_id"),
+                    "claimed_amount": issue.get("claimed_amount"),
+                    "issues": list(issue.get("issues") or []),
+                },
+            ),
+        })
+
+    # 5. Extraction-quality: suspected omissions from the adversarial second pass
+    for item in missing_claims or []:
+        anchor = f"；金额锚定：{item['anchor_issue']}" if item.get("anchor_issue") else ""
+        checklist.append({
+            **base_item(
+                item.get("pending_id") or "INV-MISSING-CLAIM", "疑似漏提主张核查", "高",
+                f"{item.get('victim_name', '')} ➔ {item.get('alleged_recipient_name') or '待确认'}"
+                f"（¥{item.get('claimed_amount', '')}）",
+                (
+                    f"漏提复核在该材料中发现一处未被已提取主张覆盖的付款事实{anchor}。"
+                    f"确认后由人工补录主张；系统不会自动并入资金复核。"
+                ),
+                [],
+                item.get("next_action") or "核对原文后决定是否补录主张。",
+                facts={
+                    "pending_id": item.get("pending_id"),
+                    "victim_name": item.get("victim_name"),
+                    "claimed_amount": item.get("claimed_amount"),
+                    "anchor_issue": item.get("anchor_issue"),
+                },
+            ),
+        })
 
     if not checklist:
         checklist.append({
@@ -142,6 +258,144 @@ def generate_investigation_checklist(
     return checklist
 
 
+_NUMERIC_TOKEN = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _numeric_tokens(text: str) -> set[Decimal]:
+    """Every number appearing in a piece of text, normalized for comparison."""
+    tokens: set[Decimal] = set()
+    for raw in _NUMERIC_TOKEN.findall(text or ""):
+        try:
+            tokens.add(Decimal(raw.replace(",", "")))
+        except InvalidOperation:
+            continue
+    return tokens
+
+
+def request_investigation_notes(
+    payload: list[dict[str, Any]], provider: LLMProvider | None
+) -> tuple[dict[str, dict[str, str]], dict[str, Any]]:
+    """Ask the model to reword the checklist. Returns ``({item_id: wording}, audit)``.
+
+    Split from :func:`polish_investigation_checklist` so a caller that renders repeatedly
+    can cache the model call on content while still merging in live ``status`` values.
+    """
+    report: dict[str, Any] = {
+        "checked": False,
+        "provider": getattr(provider, "name", "none"),
+        "rewritten": [],
+        "rejected": {},
+        "notes": [],
+    }
+    if provider is None or not supports_schema(provider, SCHEMA_INVESTIGATION_NOTE):
+        report["notes"].append("INVESTIGATION_NOTE_UNSUPPORTED_BY_PROVIDER")
+        return {}, report
+    if not payload:
+        return {}, report
+
+    try:
+        rows = provider.generate_structured(
+            text=build_investigation_note_input(payload),
+            schema_name=SCHEMA_INVESTIGATION_NOTE,
+        )
+    except Exception as exc:  # noqa: BLE001 - wording is optional, never fatal
+        report["notes"].append(f"INVESTIGATION_NOTE_CALL_FAILED:{type(exc).__name__}")
+        return {}, report
+
+    report["checked"] = True
+    pool_by_id = {
+        item["item_id"]: _numeric_tokens(" ".join([
+            str(item.get("item_id") or ""),
+            str(item.get("target") or ""),
+            str(item.get("current_suggestion") or ""),
+            str(item.get("current_next_action") or ""),
+            str(item.get("source_locator") or ""),
+            json.dumps(item.get("facts") or {}, ensure_ascii=False),
+        ]))
+        for item in payload
+    }
+    notes: dict[str, dict[str, str]] = {}
+    for row in rows:
+        item_id = row["item_id"]
+        if item_id not in pool_by_id:
+            report["rejected"][item_id] = "UNKNOWN_ITEM"
+            continue
+        candidate = f"{row['suggestion']} {row['next_action']}"
+        invented = _numeric_tokens(candidate) - pool_by_id[item_id]
+        if invented:
+            report["rejected"][item_id] = (
+                "NEW_NUMBER:" + ",".join(sorted(str(value) for value in invented))
+            )
+            continue
+        notes[item_id] = {
+            "suggestion": row["suggestion"],
+            "next_action": row["next_action"],
+            "wording_source": report["provider"],
+        }
+    report["rewritten"] = sorted(notes)
+    return notes, report
+
+
+def apply_investigation_notes(
+    checklist: list[dict[str, Any]], notes: dict[str, dict[str, str]]
+) -> list[dict[str, Any]]:
+    items = [dict(item) for item in checklist]
+    for item in items:
+        item.setdefault("wording_source", "template")
+        note = notes.get(item["item_id"])
+        if not note:
+            continue
+        if note.get("suggestion"):
+            item["suggestion"] = note["suggestion"]
+        if note.get("next_action"):
+            item["next_action"] = note["next_action"]
+        item["wording_source"] = note.get("wording_source", "model")
+    return items
+
+
+def polish_investigation_checklist(
+    checklist: list[dict[str, Any]],
+    provider: LLMProvider | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Let a model reword the checklist, never re-decide it.
+
+    The deterministic checklist is authoritative: it fixes which items exist, their
+    category, priority, target and the numbers involved. The model only rewrites the
+    prose so it reads as this case rather than as a template.
+
+    The hard constraint is numeric: every number in the rewritten text must already
+    exist in the item. That blocks the failure mode where a model "helpfully" computes
+    a derived figure (the 128.6万 − 86万 = 42.6万 mistake) and states it as fact.
+    A rejected rewrite keeps the template wording — degradation is safe and visible.
+    """
+    items = [dict(item) for item in checklist]
+    for item in items:
+        item.setdefault("wording_source", "template")
+    if provider is None or not supports_schema(provider, SCHEMA_INVESTIGATION_NOTE):
+        return items, {
+            "checked": False,
+            "provider": getattr(provider, "name", "none"),
+            "rewritten": [],
+            "rejected": {},
+            "notes": ["INVESTIGATION_NOTE_UNSUPPORTED_BY_PROVIDER"],
+        }
+
+    payload = [
+        {
+            "item_id": item["item_id"],
+            "category": item.get("category"),
+            "priority": item.get("priority"),
+            "target": item.get("target"),
+            "facts": item.get("facts") or {},
+            "current_suggestion": item.get("suggestion"),
+            "current_next_action": item.get("next_action"),
+        }
+        for item in items
+    ]
+    notes, report = request_investigation_notes(payload, provider)
+    return apply_investigation_notes(items, notes), report
+
+
 def build_case_master_report(
     case_id: str,
     claims: list[Claim],
@@ -151,6 +405,11 @@ def build_case_master_report(
     audit_events: list[Any] | None = None,
     claim_locators: list[SourceLocator] | None = None,
     evidence_conflicts: list[dict[str, Any]] | None = None,
+    extraction_issues: list[dict[str, Any]] | None = None,
+    missing_claims: list[dict[str, Any]] | None = None,
+    alias_registry: Any | None = None,
+    narrative: dict[str, Any] | None = None,
+    narrative_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a multi-claim funds review workbook with an integrity fingerprint."""
     if summary is None:
@@ -247,6 +506,8 @@ def build_case_master_report(
             locator for claim in claims
             for locator in getattr(claim, "source_locators", [])
         ],
+        extraction_issues=extraction_issues,
+        missing_claims=missing_claims,
     )
 
     refund_records = [
@@ -287,6 +548,17 @@ def build_case_master_report(
         "fund_flow_topology": mermaid_code,
         "investigation_checklist": checklist,
         "evidence_conflicts": evidence_conflicts,
+        # Extraction-quality signals. Deliberately outside ``data_integrity_sha256``:
+        # that fingerprint seals the decisions, these are pre-decision advisories.
+        "extraction_review_queue": list(extraction_issues or []),
+        "suspected_missing_claims": list(missing_claims or []),
+        "party_alias_merges": (
+            alias_registry.to_dict() if hasattr(alias_registry, "to_dict") else None
+        ),
+        # Model-written narrative over the deterministic facts, plus the audit of how it
+        # was accepted or rejected. Absent means "table-only workbook".
+        "narrative": narrative,
+        "narrative_audit": narrative_audit,
     }
 
 
@@ -306,29 +578,9 @@ def case_report_to_html(report: dict[str, Any]) -> str:
     checklist = report.get("investigation_checklist", [])
     evidence_conflicts = report.get("evidence_conflicts", [])
 
-    status_map = {
-        "FULLY_CORROBORATED": "资金证据完整覆盖",
-        "PARTIALLY_CORROBORATED": "资金证据部分印证",
-        "CONFLICTING": "证据材料存在矛盾",
-        "UNSUPPORTED": "暂无流水证据支持",
-        "PENDING_REVIEW": "待人工复核",
-    }
-    disp_map = {
-        "INCLUDED": "采信纳入",
-        "DISPUTED": "列为争议",
-        "EXCLUDED": "予以排除",
-        "PENDING": "待核验",
-    }
-    reason_map = {
-        "MATCHED_CLAIM": "吻合起诉指控事实",
-        "THIRD_PARTY_RECIPIENT": "第三方账户代收代转",
-        "DUPLICATE_TRANSACTION": "重复记账/镜像流水",
-        "UNRELATED_TRANSACTION": "与本案无关的日常交易",
-        "ACCOUNT_MISMATCH": "非涉案指定账户",
-        "AMOUNT_MISMATCH": "金额存在出入",
-        "DATE_MISMATCH": "超出案发时间跨度",
-        "OTHER": "其他经办人说明事项",
-    }
+    status_map = REVIEW_STATUS_LABELS
+    disp_map = DISPOSITION_LABELS
+    reason_map = REASON_CODE_LABELS
 
     # Claims table rows
     claims_rows = "".join(
@@ -386,11 +638,110 @@ def case_report_to_html(report: dict[str, Any]) -> str:
         for conflict in evidence_conflicts
     )
     conflict_section = (
-        "<h2>三、证据冲突与争议焦点</h2>"
+        "<h2>{no}、证据冲突与争议焦点</h2>"
         "<p class='section-note'>下列内容用于提示材料之间的差异和回查方向，不替代人工对事实和法律问题的判断。</p>"
         f"{conflict_sections}"
         if evidence_conflicts else ""
     )
+
+    # Extraction-quality section: signals that never touch the money maths but that a
+    # human still has to resolve before the workbook can be treated as settled.
+    extraction_queue = report.get("extraction_review_queue", [])
+    missing_claims = report.get("suspected_missing_claims", [])
+    alias_merges = report.get("party_alias_merges") or {}
+
+    queue_rows = "".join(
+        f"<tr><td>{html.escape(str(item.get('claim_id', '')))}</td>"
+        f"<td>¥{html.escape(str(item.get('claimed_amount', '')))}</td>"
+        f"<td>{html.escape('、'.join(item.get('issues') or []))}</td>"
+        f"<td>{html.escape(str(item.get('source_text') or '-'))}</td>"
+        f"<td>{html.escape(str(item.get('next_action', '')))}</td></tr>"
+        for item in extraction_queue
+    )
+    missing_rows = "".join(
+        f"<tr><td>{html.escape(str(item.get('pending_id', '')))}</td>"
+        f"<td>{html.escape(str(item.get('victim_name', '')))} ➔ "
+        f"{html.escape(str(item.get('alleged_recipient_name') or '待确认'))}</td>"
+        f"<td>¥{html.escape(str(item.get('claimed_amount', '')))}</td>"
+        f"<td>{html.escape(str(item.get('anchor_issue') or '-'))}</td>"
+        f"<td>{html.escape(str(item.get('source_text') or ''))}</td></tr>"
+        for item in missing_claims
+    )
+    alias_rows = "".join(
+        f"<tr><td>{html.escape(str(merge.get('alias', '')))}</td>"
+        f"<td>{html.escape(str(merge.get('canonical', '')))}</td>"
+        f"<td>{html.escape(str(merge.get('confidence', '')))}</td>"
+        f"<td>{html.escape('；'.join(e.get('source_text', '') for e in merge.get('evidence', [])) or '-')}</td></tr>"
+        for merge in alias_merges.get("merges", [])
+    )
+
+    extraction_blocks = []
+    if queue_rows:
+        extraction_blocks.append(
+            "<h3>主张金额锚定复核</h3>"
+            "<p class='section-note'>金额无法在其引用原文中逐字找到依据，需补录材料或人工确认。</p>"
+            "<table><thead><tr><th>主张编号</th><th>主张金额</th><th>问题</th>"
+            "<th>引用原文</th><th>下一步</th></tr></thead>"
+            f"<tbody>{queue_rows}</tbody></table>"
+        )
+    if missing_rows:
+        extraction_blocks.append(
+            "<h3>疑似漏提主张（待人工确认）</h3>"
+            "<p class='section-note'>漏提复核发现的候选，未确认前不进入资金复核。</p>"
+            "<table><thead><tr><th>事项编号</th><th>被害人 ➔ 收款人</th><th>金额</th>"
+            "<th>金额锚定</th><th>原文依据</th></tr></thead>"
+            f"<tbody>{missing_rows}</tbody></table>"
+        )
+    if alias_rows:
+        extraction_blocks.append(
+            "<h3>已确认主体归并</h3>"
+            f"<p class='section-note'>确认人：{html.escape(str(alias_merges.get('confirmed_by', '')))}；"
+            "下列名称已按人工确认合并为同一主体。</p>"
+            "<table><thead><tr><th>别名</th><th>归并为</th><th>置信度</th>"
+            "<th>依据</th></tr></thead>"
+            f"<tbody>{alias_rows}</tbody></table>"
+        )
+    extraction_section = (
+        "<h2>{no}、提取质量与漏提复核</h2>"
+        "<p class='section-note'>本部分为提取质量信号，不参与金额、覆盖与状态判定。</p>"
+        f"{''.join(extraction_blocks)}"
+        if extraction_blocks else ""
+    )
+
+    from legal_funds_agent.services.case_narrative_service import narrative_html_section
+
+    narrative_section = narrative_html_section(report.get("narrative"))
+
+    # Section numbers stay contiguous whether or not the optional sections appear.
+    numbers: dict[str, int] = {}
+    counter = 0
+    if narrative_section:
+        counter += 1
+        numbers["narrative"] = counter
+    counter += 1
+    numbers["claims"] = counter
+    counter += 1
+    numbers["topology"] = counter
+    if evidence_conflicts:
+        counter += 1
+        numbers["conflicts"] = counter
+    counter += 1
+    numbers["refunds"] = counter
+    counter += 1
+    numbers["transactions"] = counter
+    counter += 1
+    numbers["checklist"] = counter
+    if extraction_blocks:
+        counter += 1
+        numbers["extraction"] = counter
+    cn = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九"}
+    numbers = {key: cn.get(value, str(value)) for key, value in numbers.items()}
+    if extraction_blocks:
+        extraction_section = extraction_section.replace("{no}", numbers["extraction"])
+    if narrative_section:
+        narrative_section = narrative_section.replace("{no}", numbers["narrative"])
+    if evidence_conflicts:
+        conflict_section = conflict_section.replace("{no}", numbers["conflicts"])
 
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -428,6 +779,10 @@ th {{ background: #f1f5f9; color: #334155; font-weight: 600; }}
 .section-note {{ color:#64748b; font-size:13px; }}
 .conflict-card {{ border:1px solid #cbd5e1; border-left:4px solid #d97706; border-radius:6px; padding:14px 16px; margin:14px 0 20px; background:#fffdf7; }}
 .conflict-title {{ font-size:15px; font-weight:700; color:#334155; margin-bottom:10px; }}
+.narrative-box {{ background:#f8fafc; border:1px solid #cbd5e1; border-left:4px solid #0f172a; border-radius:6px; padding:16px 20px; margin:16px 0 26px; }}
+.narrative-box h3 {{ font-size:14px; margin:14px 0 6px; color:#0f172a; }}
+.narrative-box h3:first-child {{ margin-top:0; }}
+.narrative-box p {{ margin:0 0 6px; line-height:1.75; }}
 @media print {{
   .no-print {{ display: none !important; }}
   body {{ margin: 0; padding: 5mm; font-size: 12px; }}
@@ -438,8 +793,18 @@ th {{ background: #f1f5f9; color: #334155; font-weight: 600; }}
 }}
 </style>
 <script type="module">
-import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
-mermaid.initialize({{ startOnLoad: true }});
+(async () => {{
+  try {{
+    const mod = await import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs');
+    mod.default.initialize({{ startOnLoad: true }});
+  }} catch (e) {{
+    document.querySelectorAll('pre.mermaid').forEach(el => {{
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = '<p style="color:#b45309;font-size:12px;margin-bottom:8px;">（图谱组件加载失败，显示文本源）</p><pre style="background:#f8fafc;border:1px solid #cbd5e1;padding:12px;overflow:auto;">' + el.textContent.replace(/</g, '&lt;') + '</pre>';
+      el.parentNode.replaceChild(wrapper, el);
+    }});
+  }}
+}})();
 </script>
 </head>
 <body>
@@ -502,7 +867,9 @@ mermaid.initialize({{ startOnLoad: true }});
   当前金额为待人工核验的参考值：<strong>¥{summary.get('total_refund_amount', 0.0):,.2f}</strong>；不替代司法机关对返还性质及涉案金额的最终认定。
 </div>
 
-<h2>一、 涉案事实主张（Claims）核验汇总对照表</h2>
+{narrative_section}
+
+<h2>{numbers['claims']}、 涉案事实主张（Claims）核验汇总对照表</h2>
 <table>
   <thead>
     <tr>
@@ -515,14 +882,14 @@ mermaid.initialize({{ startOnLoad: true }});
   </tbody>
 </table>
 
-<h2>二、 全案涉案资金流向穿透拓扑图谱</h2>
+<h2>{numbers['topology']}、 全案涉案资金流向穿透拓扑图谱</h2>
 <div class="topology-box">
   <pre class="mermaid">{html.escape(report['fund_flow_topology'])}</pre>
 </div>
 
 {conflict_section}
 
-<h2>{'四' if evidence_conflicts else '三'}、疑似向被害人账户转回流水明细表 (共 {len(refund_list)} 笔 · 合计 ¥{summary.get('total_refund_amount', Decimal('0.00')):,.2f})</h2>
+<h2>{numbers['refunds']}、疑似向被害人账户转回流水明细表 (共 {len(refund_list)} 笔 · 合计 ¥{summary.get('total_refund_amount', Decimal('0.00')):,.2f})</h2>
 <table>
   <thead>
     <tr>
@@ -541,7 +908,7 @@ mermaid.initialize({{ startOnLoad: true }});
   </tbody>
 </table>
 
-<h2>{'五' if evidence_conflicts else '四'}、涉案付款流水逐笔复核记录 (共 {len(report['reviewed_transactions'])} 笔)</h2>
+<h2>{numbers['transactions']}、涉案付款流水逐笔复核记录 (共 {len(report['reviewed_transactions'])} 笔)</h2>
 <table>
   <thead>
     <tr>
@@ -554,7 +921,7 @@ mermaid.initialize({{ startOnLoad: true }});
   </tbody>
 </table>
 
-<h2>{'六' if evidence_conflicts else '五'}、补充调查回查清单</h2>
+<h2>{numbers['checklist']}、补充调查回查清单</h2>
 <table>
   <thead>
     <tr>
@@ -565,6 +932,8 @@ mermaid.initialize({{ startOnLoad: true }});
     {checklist_rows}
   </tbody>
 </table>
+
+{extraction_section}
 
 <div class="footer-seal">
   <div>

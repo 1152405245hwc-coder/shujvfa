@@ -9,12 +9,11 @@ import urllib.request
 from time import perf_counter
 from typing import Any, Callable
 
+from legal_funds_agent.llm.schemas import SCHEMA_PAYMENT_CLAIM, SCHEMAS, PAYMENT_CLAIM_PROMPT, get_schema
 
-SYSTEM_PROMPT = """你是刑事案件材料的结构化信息提取工具。只提取原文明确陈述的付款主张，
-不得判断是否构成犯罪，不得认定犯罪金额，不得补充原文没有的事实。返回严格 JSON 对象，
-格式为 {"claims":[{"victim_name":"","alleged_recipient_name":"","claimed_amount":"0.00",
-"time_start":"YYYY-MM-DD","time_end":"YYYY-MM-DD","source_text":"","start_offset":0,"end_offset":0}]}。
-字符偏移以输入文本 Python 字符索引为准。"""
+# Kept for backwards compatibility with earlier imports; the authoritative copy now
+# lives in ``llm/schemas.py`` so that every provider shares one prompt per contract.
+SYSTEM_PROMPT = PAYMENT_CLAIM_PROMPT
 
 
 def clean_markdown_json(content: str) -> str:
@@ -27,6 +26,8 @@ def clean_markdown_json(content: str) -> str:
 
 
 class DeepSeekProvider:
+    supported_schemas = tuple(SCHEMAS)
+
     def __init__(self, *, api_key: str, base_url: str, model: str,
                  opener: Callable[..., Any] = urllib.request.urlopen):
         if not api_key:
@@ -35,18 +36,17 @@ class DeepSeekProvider:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.name = model
-        self.prompt_version = "payment_claim_v0.1"
+        self.prompt_version = SCHEMA_PAYMENT_CLAIM
         self.last_call_metrics: dict[str, int | None] = {}
         self._opener = opener
 
     def generate_structured(self, *, text: str, schema_name: str) -> list[dict[str, Any]]:
-        if schema_name != "payment_claim_v0.1":
-            raise ValueError(f"unsupported schema: {schema_name}")
+        spec = get_schema(schema_name)
 
         payload = json.dumps({
             "model": self.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": spec.system_prompt},
                 {"role": "user", "content": text},
             ],
             "response_format": {"type": "json_object"},
@@ -69,6 +69,12 @@ class DeepSeekProvider:
                     raw_body = response.read().decode("utf-8")
                     response_payload = json.loads(raw_body)
                 break
+            except urllib.error.HTTPError as exc:
+                if exc.code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                    last_error = exc
+                    time.sleep(1.0 * (attempt + 1))
+                    continue
+                raise RuntimeError(f"DeepSeek API returned non-retryable HTTP {exc.code}: {exc}") from exc
             except (urllib.error.URLError, TimeoutError, http.client.RemoteDisconnected, json.JSONDecodeError) as exc:
                 last_error = exc
                 if attempt < max_retries:
@@ -83,31 +89,16 @@ class DeepSeekProvider:
             "output_tokens": usage.get("completion_tokens"),
             "latency_ms": elapsed_ms,
         }
+        self.prompt_version = spec.name
 
         try:
             content = response_payload["choices"][0]["message"]["content"]
             clean_content = clean_markdown_json(content)
             parsed = json.loads(clean_content)
-            claims = parsed["claims"]
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-            raise ValueError(f"DeepSeek returned invalid structured claim data: {exc}") from exc
+            raise ValueError(f"DeepSeek returned invalid structured data for {spec.name}: {exc}") from exc
 
-        if not isinstance(claims, list):
-            raise ValueError("DeepSeek claims must be a list")
-
-        normalized: list[dict[str, Any]] = []
-        for claim in claims:
-            if not isinstance(claim, dict):
-                continue
-            normalized.append({
-                "victim_name": str(claim.get("victim_name") or "").strip(),
-                "alleged_recipient_name": str(claim.get("alleged_recipient_name") or "").strip() or None,
-                "claimed_amount": str(claim.get("claimed_amount") or "0.00").replace(",", "").strip(),
-                "time_start": str(claim.get("time_start") or "2026-01-01").strip(),
-                "time_end": str(claim.get("time_end") or "2026-01-01").strip(),
-                "source_text": str(claim.get("source_text") or "").strip(),
-                "start_offset": int(claim.get("start_offset") or 0),
-                "end_offset": int(claim.get("end_offset") or 0),
-            })
-
-        return normalized
+        try:
+            return spec.normalizer(parsed)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"DeepSeek returned invalid structured data for {spec.name}: {exc}") from exc
