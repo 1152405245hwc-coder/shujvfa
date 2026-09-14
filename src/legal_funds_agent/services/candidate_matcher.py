@@ -147,3 +147,62 @@ def match_claim_transactions(claim: Claim, transactions: list[Transaction],
         if amount_match == "EXCEEDS": risks.append("AMOUNT_EXCEEDS_CLAIM")
         candidates.append(CandidateMatch(claim.id, tx.id, MatchLevel.EXACT if payer_exact else MatchLevel.MISMATCH, MatchLevel.EXACT if payee_exact else MatchLevel.MISMATCH, amount_match, "EXACT" if in_range else "WINDOW", tuple(rules), bool(risks), tuple(risks)))
     return candidates
+
+
+def find_weak_payer_signals(
+    claim: Claim, transactions: list[Transaction],
+    date_window_days: int = DEFAULT_DATE_WINDOW_DAYS,
+    alias_registry=None,
+    exclude_payer_names: frozenset[str] = frozenset(),
+) -> list[CandidateMatch]:
+    """Recall safety net: transfers that reach the claim's recipient inside the
+    claim window but were NOT paid by the victim — e.g. a relative paying on the
+    victim's behalf.
+
+    These are display-only review leads. They never enter the candidate set,
+    never affect amounts or decisions, and disappear once a human confirms the
+    payer as an alias of the victim (the strict matcher then recalls them
+    normally). Payers who are victims of other claims in the same case are
+    excluded: those transfers are covered by their own claim.
+    """
+    signals: list[CandidateMatch] = []
+    seen_events: set[tuple[str, str, str, str]] = set()
+    raw_start, raw_end = claim.time_start, claim.time_end
+    start = raw_start if raw_start is not None else date.min
+    end = raw_end if raw_end is not None else date.max
+    window_start = start - timedelta(days=date_window_days) if raw_start is not None else date.min
+    window_end = end + timedelta(days=date_window_days) if raw_end is not None else date.max
+    victim_key = _party_key(claim.victim_name, alias_registry)
+    recipient_key = _party_key(claim.alleged_recipient_name, alias_registry)
+    for tx in transactions:
+        if not (window_start <= tx.date <= window_end):
+            continue
+        if _party_key(tx.payer_name, alias_registry) == victim_key:
+            continue  # a strict candidate, not a weak signal
+        if normalize_party_name(tx.payer_name) in exclude_payer_names:
+            continue  # another victim's own payment, covered by their claim
+        payee_is_recipient = bool(
+            (recipient_key and _party_key(tx.payee_name, alias_registry) == recipient_key)
+            or (claim.alleged_recipient_account and tx.payee_account == claim.alleged_recipient_account)
+            or (claim.alleged_recipient_account_id and tx.payee_account_id == claim.alleged_recipient_account_id)
+        )
+        if not payee_is_recipient:
+            continue
+        partial_floor = max(claim.claimed_amount * Decimal("0.01"), Decimal("100"))
+        if tx.amount < partial_floor:
+            continue
+        canonical_key = transaction_canonical_key(tx)
+        if canonical_key in seen_events:
+            continue
+        seen_events.add(canonical_key)
+        amount_match = (
+            "EXACT" if tx.amount == claim.claimed_amount
+            else "PARTIAL" if tx.amount < claim.claimed_amount
+            else "EXCEEDS"
+        )
+        signals.append(CandidateMatch(
+            claim.id, tx.id, MatchLevel.MISMATCH, MatchLevel.EXACT, amount_match,
+            "EXACT" if start <= tx.date <= end else "WINDOW",
+            ("W01",), False, ("WEAK_PAYER_SIGNAL",),
+        ))
+    return signals

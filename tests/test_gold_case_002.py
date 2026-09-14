@@ -68,11 +68,17 @@ class GoldCase002Test(unittest.TestCase):
             (visible / "documents" / "01_indictment.docx").read_bytes(),
             filename="01_indictment.docx",
         )
-        # 周某、郑某两份陈述无法仅凭确定性规则锚定到完整付款事实；本案以第一主张
-        # 被害人刘某的陈述进入主链，与 UI 单陈述上传的行为一致。
-        cls.statement_text = extract_document_text(
-            (visible / "documents" / "03_victim_liu_statement.docx").read_bytes(),
-            filename="03_victim_liu_statement.docx",
+        # 多被害人案件：三份陈述合并为一个文本进入主链，与 UI 多文件上传后的
+        # 拼接行为一致；各被害人段落由 "被害人X陈述" 标题切分。
+        cls.statement_text = "\n\n".join(
+            extract_document_text(
+                (visible / "documents" / name).read_bytes(), filename=name,
+            )
+            for name in (
+                "03_victim_liu_statement.docx",
+                "04_victim_zhou_statement.docx",
+                "05_victim_zheng_statement.docx",
+            )
         )
         csv_text, skip_stats = extract_transactions_csv_detailed(
             (visible / "bank" / "02_bank_statements.xlsx").read_bytes(),
@@ -112,13 +118,32 @@ class GoldCase002Test(unittest.TestCase):
         self.assertEqual(victims, ["刘某", "周某", "郑某", "刘某"])
 
     def test_liu_statement_extracts_total_without_fabricated_conflict(self):
-        fact = self.result.statement_fact
+        facts = self.result.statement_facts_by_victim
+        fact = facts["刘某"]
         self.assertIsNotNone(fact)
         self.assertEqual(fact.recipient_name, "陈某")
         self.assertEqual(fact.amount, Decimal("2400000.00"))
         self.assertIsNone(fact.payment_date)
-        self.assertEqual(self.result.statement_extraction_warnings, [])
+        # 周某、郑某的陈述没有"共/共计/累计"锚定的总额，诚实报告为不可提取，
+        # 而不是拿分期金额伪造金额冲突。
+        self.assertIsNone(facts["周某"])
+        self.assertIsNone(facts["郑某"])
+        self.assertEqual(
+            self.result.statement_extraction_warnings,
+            ["STATEMENT_FACT_UNAVAILABLE", "STATEMENT_FACT_UNAVAILABLE"],
+        )
+        # 第一主张（刘某 C1）被其陈述覆盖且无冲突。
         self.assertEqual(self.result.review_required_reasons, [])
+        self.assertEqual(self.result.statement_conflicts, [])
+
+    def test_statement_facts_are_attributed_per_victim_and_claim(self):
+        c1, c2, c3, c4 = self.result.claims
+        conflicts = self.result.statement_conflicts_by_claim
+        # 任何 Claim 都不得因他人陈述或同一被害人其他主张而产生金额/日期/收款人冲突。
+        self.assertEqual(conflicts[c1.id], [])
+        self.assertEqual(conflicts[c2.id], [])
+        self.assertEqual(conflicts[c3.id], [])
+        self.assertEqual(conflicts[c4.id], [])
 
     def test_claim1_recalls_all_four_liu_payments(self):
         c1 = self.result.claims[0]
@@ -143,6 +168,32 @@ class GoldCase002Test(unittest.TestCase):
             for c in self.result.candidates_by_claim[c2.id]
         }
         self.assertNotIn("B204", payer_accounts)
+
+    def test_third_party_payer_surfaces_as_weak_signal(self):
+        # E007（孙某代周某支付 60 万）不作为候选计入，但必须以弱信号形式
+        # 呈现在 C2 的复核视野内，供人工确认代付关系。
+        c2 = self.result.claims[1]
+        signals = self.result.weak_signals_by_claim[c2.id]
+        signal_txs = {
+            (
+                self.result.transactions[s.transaction_id].date,
+                self.result.transactions[s.transaction_id].amount,
+                self.result.transactions[s.transaction_id].payer_account_id,
+            )
+            for s in signals
+        }
+        self.assertIn((date(2025, 4, 16), Decimal("600000.00"), "B204"), signal_txs)
+        for signal in signals:
+            self.assertIn("WEAK_PAYER_SIGNAL", signal.risk_codes)
+            self.assertFalse(signal.blocking_conflict)
+        # 弱信号绝不进入候选集，不影响金额与决定。
+        all_candidate_ids = {
+            c.transaction_id
+            for candidates in self.result.candidates_by_claim.values()
+            for c in candidates
+        }
+        for signal in signals:
+            self.assertNotIn(signal.transaction_id, all_candidate_ids)
 
     def test_cross_claim_duplication_is_flagged_at_candidate_level(self):
         c1, c4 = self.result.claims[0], self.result.claims[3]

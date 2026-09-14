@@ -163,6 +163,24 @@ def extract_statement_payment(
         return None
 
 
+_VICTIM_HEADING = re.compile(r"被害人(?P<name>[一-鿿]{1,4})陈述")
+
+
+def split_victim_statements(text: str) -> dict[str, str]:
+    """Split a combined statement document into per-victim sections.
+
+    Sections are delimited by "被害人X陈述" headings. Returns an empty dict when
+    the text carries no such heading — the caller then treats the whole text as
+    a single statement (the historical single-victim behaviour).
+    """
+    matches = list(_VICTIM_HEADING.finditer(text))
+    sections: dict[str, str] = {}
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        sections[match["name"]] = text[match.start():end]
+    return sections
+
+
 def compare_statement_to_claim(fact: StatementPaymentFact, claim: Claim) -> list[str]:
     conflicts: list[str] = []
     if fact.amount != claim.claimed_amount:

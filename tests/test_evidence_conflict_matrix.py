@@ -100,9 +100,11 @@ class GenericMatrixTest(unittest.TestCase):
         self.assertIn("代收代转特征", entry["materials"][0]["finding"])
 
     def test_terminal_recipient_is_medium_priority(self):
+        # 60,000 is above the case-source recall floor (victim-sourced inflows must
+        # be ≥ RELATED_ACCOUNT_MIN_AMOUNT to keep life spending out of the matrix).
         transactions = [
             tx("T01", payer_name="张某", payer_account_id="A001", payee_name="王某",
-               payee_account_id="A009", amount="1000.00"),
+               payee_account_id="A009", amount="60000.00"),
         ]
         matrix = build_evidence_conflict_matrix(
             {t.id: t for t in transactions}, None, claims=[claim()]

@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -28,9 +29,26 @@ from legal_funds_agent.llm.schemas import (
     supports_schema,
 )
 from legal_funds_agent.services.transaction_analysis import (
+    RELATED_ACCOUNT_MIN_AMOUNT,
+    normalize_account_reference,
     normalize_party_name,
     unique_transactions,
 )
+
+# Same recall window as the candidate matcher: a victim's transfer counts as
+# case-sourced only near a claim's stated period.
+_CASE_SOURCE_WINDOW_DAYS = 3
+
+
+def _in_any_claim_window(tx_date: Any, claims: list[Any]) -> bool:
+    for claim in claims:
+        start = getattr(claim, "time_start", None)
+        end = getattr(claim, "time_end", None)
+        if start is None or end is None:
+            return True
+        if start - timedelta(days=_CASE_SOURCE_WINDOW_DAYS) <= tx_date <= end + timedelta(days=_CASE_SOURCE_WINDOW_DAYS):
+            return True
+    return False
 
 STANCE_LABEL = {"supports": "印证", "contradicts": "矛盾", "qualifies": "限定"}
 
@@ -64,32 +82,83 @@ def _money(value: Decimal) -> str:
 def third_party_account_facts(
     transactions: dict[str, Transaction], claims: list[Any] | None = None
 ) -> list[dict[str, Any]]:
-    """Accounts that receive funds but that no claim names as its recipient.
+    """Accounts that receive case-sourced funds but that no claim names as its recipient.
+
+    An inflow is case-sourced when it is a substantial victim transfer inside a
+    claim's time window, or a substantial onward transfer out of an account that
+    already holds case-sourced funds (the claim recipient, or an account flagged
+    by the same rule). A victim's ordinary life spending and the victim's own
+    inbound salary therefore never turn merchants or the victims themselves into
+    "third-party accounts". Without claims there is no case context to filter
+    with, and the historical behaviour is kept: every payee is a candidate.
 
     A flow-through account (one that also pays out) is the interesting case: it is the
     pattern behind 代收代转, so it is flagged for the human reviewer.
     """
     unique = unique_transactions(transactions.values())
+    claims_list = list(claims or [])
 
     recipient_account_ids = {
-        value for claim in (claims or [])
+        value for claim in claims_list
         for value in (getattr(claim, "alleged_recipient_account_id", None),)
         if value
     }
     recipient_names = {
         normalize_party_name(getattr(claim, "alleged_recipient_name", None))
-        for claim in (claims or [])
+        for claim in claims_list
         if getattr(claim, "alleged_recipient_name", None)
     }
+    victim_names = {
+        normalize_party_name(getattr(claim, "victim_name", None))
+        for claim in claims_list
+        if getattr(claim, "victim_name", None)
+    }
+    victim_account_refs = {
+        normalize_account_reference(getattr(claim, "victim_account", None))
+        for claim in claims_list
+        if getattr(claim, "victim_account", None)
+    }
+
+    if claims_list:
+        # Taint propagation: seed with the claim recipients' accounts, then follow
+        # substantial transfers hop by hop. An inflow qualifies when its payer is
+        # a victim paying inside a claim window, or an account already holding
+        # case-sourced funds.
+        tainted: set[str] = set(recipient_account_ids)
+        qualifying_tx_ids: set[str] = set()
+        changed = True
+        while changed:
+            changed = False
+            for tx in unique:
+                if tx.id in qualifying_tx_ids or tx.amount < RELATED_ACCOUNT_MIN_AMOUNT:
+                    continue
+                payer_key = tx.payer_account_id or normalize_account_reference(tx.payer_account)
+                payer_is_victim = normalize_party_name(tx.payer_name) in victim_names
+                if payer_is_victim:
+                    if not _in_any_claim_window(tx.date, claims_list):
+                        continue
+                elif payer_key not in tainted:
+                    continue
+                qualifying_tx_ids.add(tx.id)
+                payee_key = tx.payee_account_id or normalize_account_reference(tx.payee_account)
+                if payee_key and payee_key not in tainted:
+                    tainted.add(payee_key)
+                    changed = True
+        qualifying = [tx for tx in unique if tx.id in qualifying_tx_ids]
+    else:
+        qualifying = unique
 
     received: dict[str, dict[str, Any]] = {}
-    for tx in unique:
+    for tx in qualifying:
         account_id = tx.payee_account_id or tx.payee_account
         if not account_id:
             continue
         if tx.payee_account_id and tx.payee_account_id in recipient_account_ids:
             continue
-        if normalize_party_name(tx.payee_name) in recipient_names:
+        payee_name = normalize_party_name(tx.payee_name)
+        if payee_name in recipient_names or payee_name in victim_names:
+            continue
+        if normalize_account_reference(tx.payee_account) in victim_account_refs:
             continue
         bucket = received.setdefault(str(account_id), {
             "account_id": str(account_id),

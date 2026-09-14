@@ -1801,7 +1801,10 @@ def _materials_panel(active_case_id: str) -> None:
                 st.error(f"实战案卷处理失败：{exc}")
     elif source == "上传材料":
         indictment = st.file_uploader("起诉书节选 / 扫描件图片", type=["txt", "docx", "pdf", "png", "jpg", "jpeg"])
-        statement = st.file_uploader("被害人陈述 / 笔录扫描件", type=["txt", "docx", "pdf", "png", "jpg", "jpeg"])
+        statement = st.file_uploader(
+            "被害人陈述 / 笔录扫描件（多被害人案件可多选，系统按“被害人X陈述”标题自动切分）",
+            type=["txt", "docx", "pdf", "png", "jpg", "jpeg"], accept_multiple_files=True,
+        )
         supplementary = st.file_uploader(
             "补充 Word 材料（证人证言 / 被告人供述，可多选）",
             type=["txt", "docx", "pdf"], accept_multiple_files=True,
@@ -1813,7 +1816,10 @@ def _materials_panel(active_case_id: str) -> None:
             st.query_params.pop("case_id", None)
             try:
                 indictment_text = extract_document_text(indictment.getvalue(), filename=indictment.name)
-                statement_text = extract_document_text(statement.getvalue(), filename=statement.name)
+                statement_text = "\n\n".join(
+                    extract_document_text(item.getvalue(), filename=item.name)
+                    for item in statement
+                )
                 supplementary_records = [
                     {"filename": item.name, "text": extract_document_text(item.getvalue(), filename=item.name)}
                     for item in (supplementary or [])
@@ -2349,6 +2355,37 @@ def review_page(result) -> None:
     )
 
     st.caption("普通候选的完整字段、处置选择和原始行号统一保留在上方审查表；需要深查时按 P 编号回到对应行。")
+
+    # 弱信号疑似流水：付款方不是被害人本人（如亲属代付），只提示、不计入。
+    weak_signals = (getattr(result, "weak_signals_by_claim", None) or {}).get(claim.id, [])
+    if weak_signals:
+        render_section_heading(
+            "03.2 / WEAK SIGNALS", "疑似关联流水（不计入金额）",
+            "付款方并非被害人本人，但流水在主张期间内到达被指控收款账户；确认代付关系前一律不计入",
+        )
+        weak_rows = []
+        for signal in weak_signals:
+            tx = result.transactions[signal.transaction_id]
+            weak_rows.append({
+                "流水号": tx.transaction_id,
+                "交易日期": str(tx.date),
+                "付款人": tx.payer_name or "-",
+                "付款账户ID": tx.payer_account_id or "-",
+                "收款人": tx.payee_name or "-",
+                "收款账户ID": tx.payee_account_id or "-",
+                "金额": float(tx.amount),
+                "摘要": getattr(tx, "remark", None) or "-",
+                "原始证据定位": _source_locator_label(tx),
+            })
+        st.dataframe(
+            weak_rows, width="stretch", hide_index=True,
+            column_config={"金额": st.column_config.NumberColumn(format="¥ %.2f", width="small")},
+        )
+        st.caption(
+            "以上流水不属于候选集，不进入任何金额汇总与状态判定。"
+            "若经核实付款人系代被害人支付（如亲属代付），请在复核意见中记录该事实及其依据；"
+            "当前版本不会据此自动计入覆盖金额。"
+        )
 
     # 步骤三：签署复核确认
     render_section_heading("04 / SIGN", "签署复核确认并保存底稿", "经办人员对事实认定与流水处置进行电子签署，签署记录入库存档、不可静默覆盖")
