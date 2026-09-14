@@ -1074,9 +1074,11 @@ def _render_fund_flow(graph, *, height: int = 430, key: str | None = None, trans
     from components.fund_flow import render_fund_flow, topology_to_payload
 
     payload = topology_to_payload(graph, transactions=transactions, disputed_names=disputed_names)
-    # A tap inside the component triggers a rerun that remounts the graph;
-    # echo the active selection back through the payload so the focus
-    # highlight can be re-applied on the fresh instance.
+    # The component keeps its own selection across reruns, so the echo is only
+    # a rebuild aid: when Streamlit does remount the subtree (tab switch,
+    # changed data) the highlight is re-applied from this value. It must NOT
+    # trigger a second rerun on every tap — the script re-execution is what
+    # made the page flash and dropped the graph back to a refitted view.
     sel_state_key = f"{key}__selection_echo"
     last_selection = st.session_state.get(sel_state_key)
     if last_selection:
@@ -1093,7 +1095,6 @@ def _render_fund_flow(graph, *, height: int = 430, key: str | None = None, trans
     )
     if current_selection != last_selection:
         st.session_state[sel_state_key] = current_selection
-        st.rerun()
     if not selection:
         st.caption("点击图中账户或资金连线可查看来源明细；滚轮缩放、拖拽平移。")
         return

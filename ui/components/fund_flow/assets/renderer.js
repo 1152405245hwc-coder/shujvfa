@@ -12,6 +12,18 @@ const FF_COLORS = {
 const FF_NODE_W = 240;
 const FF_NODE_H = 84;
 
+// Wheel zoom step: zoom multiplies by FF_WHEEL_STEP for every 100px of wheel
+// delta (one notch on a standard mouse). Cytoscape's own wheel handling is
+// bypassed (see the capture-phase listener below), so this is the single
+// place that controls zoom speed.
+const FF_WHEEL_STEP = 1.25;
+
+// Viewport (zoom + pan) survives a remount: Streamlit can rebuild the
+// component subtree (expander collapse, changed data, session restore), and
+// the graph used to jump back to a fit-all view each time. Keyed by the
+// caller's ``component_key`` and only reused when the graph is unchanged.
+const FF_VIEWPORTS = (window.__ffViewports = window.__ffViewports || {});
+
 function ffPartition(role) {
   if (role === 'victim') return 0;
   if (role === 'primary_suspect') return 1;
@@ -183,7 +195,7 @@ function ffRouteRefunds(cy) {
   });
 }
 
-function ffFitWhenReady(cy, container) {
+function ffFitWhenReady(cy, container, restore) {
   // Streamlit can run the component JS before the shadow host has its final
   // size (tab fade-in, expander reveal, sidebar reflow). fit() on a zero-size
   // container is silently ignored, leaving zoom=1/pan=0 with all content
@@ -193,6 +205,13 @@ function ffFitWhenReady(cy, container) {
     if (done) return true;
     if (container.clientWidth < 10 || container.clientHeight < 10) return false;
     cy.resize();
+    if (restore) {
+      // Same graph as the last mount: put the viewport back exactly where the
+      // reviewer left it instead of re-centring on a fresh fit().
+      cy.viewport({ zoom: restore.zoom, pan: restore.pan });
+      done = true;
+      return true;
+    }
     cy.fit(undefined, 24);
     // readability floor: on dense graphs fit() can shrink text below a usable
     // size; prefer a readable zoom centred on the fund source over showing
@@ -225,13 +244,37 @@ function ffBuildTooltip(tip, title, rows) {
 }
 
 export default function (component) {
-  const { data, setStateValue, parentElement } = component;
+  const { data, setStateValue, parentElement, key } = component;
   let root = parentElement.querySelector('.ff-root');
   if (!root) {
     root = document.createElement('div');
     root.className = 'ff-root';
     parentElement.appendChild(root);
   }
+
+  const payload = data || { nodes: [], edges: [] };
+  // The percentage-height chain from Streamlit's layout wrapper through the
+  // shadow root is not guaranteed to resolve to a definite height, so set
+  // explicit pixel heights on the canvas ourselves.
+  const viewH = Math.max(240, Number(payload.view_height) || 430);
+  const graphSig = JSON.stringify([payload.nodes, payload.edges, viewH]);
+  const viewKey = payload.component_key || key || 'ff';
+  // Viewport from the previous mount of this same graph, if any.
+  const savedView = FF_VIEWPORTS[viewKey];
+  const restoreView = savedView && savedView.sig === graphSig ? savedView : null;
+
+  // Streamlit reruns re-invoke this renderer with the SAME parentElement and a
+  // fresh data copy. Rebuilding there would blank the canvas for a frame and
+  // relayout+refit, making the view jump. When the graph content is unchanged,
+  // keep the live instance exactly as-is: zoom, pan, listeners, and the focus
+  // the user just tapped are all newer than the payload's selection echo
+  // (Python lags one rerun behind), so re-applying the echo would visibly
+  // revert the highlight for a frame. The echo is only consumed on a fresh
+  // mount below.
+  if (root.__ffSig === graphSig && root.__cy && !root.__cy.destroyed()) {
+    return root.__ffCleanup;
+  }
+  root.__ffSig = graphSig;
 
   // A previous render may have left a live cytoscape instance on this root;
   // destroy it before wiping the DOM so its listeners don't leak.
@@ -252,16 +295,10 @@ export default function (component) {
     '</div>' +
     '<div class="ff-tooltip"></div>';
 
-  const payload = data || { nodes: [], edges: [] };
-
-  // The percentage-height chain from Streamlit's layout wrapper through the
-  // shadow root is not guaranteed to resolve to a definite height, so set
-  // explicit pixel heights on the canvas ourselves.
-  const viewH = Math.max(240, Number(payload.view_height) || 430);
-  root.style.height = viewH + 'px';
   const canvas = root.querySelector('.ff-canvas');
-  canvas.style.height = viewH + 'px';
   const tip = root.querySelector('.ff-tooltip');
+  root.style.height = viewH + 'px';
+  canvas.style.height = viewH + 'px';
 
   if (!payload.nodes || payload.nodes.length === 0) {
     const empty = document.createElement('div');
@@ -332,9 +369,10 @@ export default function (component) {
   const cy = cytoscape({
     container: canvas,
     elements,
-    wheelSensitivity: 0.25,
     minZoom: 0.3,
-    maxZoom: 2.5,
+    // Headroom for the faster wheel step: at 25% per notch the old 2.5 ceiling
+    // was reached in four notches, which capped detail reading.
+    maxZoom: 4,
     style: [
       {
         selector: 'node[kind = "account"]',
@@ -462,16 +500,55 @@ export default function (component) {
     ],
   });
 
+  // Remember the viewport so a remount (tab switch, data reload) can put the
+  // reviewer back where they were instead of jumping to a fresh fit().
+  let ffViewRaf = 0;
+  const ffSaveView = () => {
+    if (ffViewRaf) return;
+    ffViewRaf = requestAnimationFrame(() => {
+      ffViewRaf = 0;
+      if (cy.destroyed()) return;
+      const pan = cy.pan();
+      FF_VIEWPORTS[viewKey] = { sig: graphSig, zoom: cy.zoom(), pan: { x: pan.x, y: pan.y } };
+    });
+  };
+  cy.on('viewport', ffSaveView);
+
+  // Cytoscape's built-in wheel zoom samples the first four wheel events before
+  // deciding how to normalise the delta, so the opening notches move at a
+  // different rate from the rest, and any sensitivity that keeps those first
+  // notches sane is far too slow afterwards. Own the wheel instead: this
+  // capture-phase listener on the wrapper runs before Cytoscape's own
+  // container-level listener and stops the event there, then applies one
+  // fixed, generous step per notch.
+  const ffOnWheel = (evt) => {
+    if (!canvas.contains(evt.target)) return; // outside the canvas: let the page scroll
+    evt.preventDefault();
+    evt.stopPropagation();
+    let delta = evt.deltaY;
+    if (evt.deltaMode === 1) delta *= 33; // DOM_DELTA_LINE
+    else if (evt.deltaMode === 2) delta *= 400; // DOM_DELTA_PAGE
+    delta = Math.max(-300, Math.min(300, delta)); // trackpads can emit huge deltas
+    const rect = canvas.getBoundingClientRect();
+    cy.zoom({
+      level: cy.zoom() * Math.pow(FF_WHEEL_STEP, -delta / 100),
+      renderedPosition: { x: evt.clientX - rect.left, y: evt.clientY - rect.top },
+    });
+  };
+  root.addEventListener('wheel', ffOnWheel, { capture: true, passive: false });
+  cy.on('destroy', () => root.removeEventListener('wheel', ffOnWheel, { capture: true }));
+
   // Paint the deterministic column layout immediately so the graph is visible
   // on the first frame; ELK then refines positions asynchronously.
   ffPresetLayout(cy);
   ffRunLayout(cy, () => {
     ffAddAccents(cy);
     ffRouteRefunds(cy);
-    ffFitWhenReady(cy, canvas);
-    // Clicking an element triggers a Streamlit rerun, which remounts this
-    // component; Python echoes the current selection back in the payload so
-    // the focus highlight survives the remount.
+    ffFitWhenReady(cy, canvas, restoreView);
+    // On a genuine remount Python echoes the last selection back in the
+    // payload; re-apply the focus highlight here. (On a plain rerun the guard
+    // above keeps the live instance, which already carries the newer
+    // selection, so this only runs for a real rebuild.)
     if (payload.selected && payload.selected.id) {
       const el = cy.getElementById(payload.selected.id);
       if (el && el.length) {
@@ -612,7 +689,8 @@ export default function (component) {
     }
   });
 
-  return () => {
+  root.__ffCleanup = () => {
     try { cy.destroy(); } catch (err) { /* already destroyed */ }
   };
+  return root.__ffCleanup;
 }

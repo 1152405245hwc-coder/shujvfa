@@ -43,7 +43,9 @@ def render_fund_flow(payload: dict[str, Any], *, height: int = 420, key: str | N
         # Pass the pixel height through data: the percentage-height chain from
         # Streamlit's layout wrapper through the shadow root is not guaranteed
         # to resolve, so the renderer sets explicit pixel heights itself.
-        data={**payload, "view_height": height},
+        # ``component_key`` is the caller's stable instance key — the renderer
+        # uses it to restore zoom/pan when Streamlit remounts the subtree.
+        data={**payload, "view_height": height, "component_key": key or ""},
         height=height,
         default={"selection": None},
         on_selection_change=lambda: None,
