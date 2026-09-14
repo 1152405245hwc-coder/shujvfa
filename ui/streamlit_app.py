@@ -922,15 +922,19 @@ def _supplementary_documents(result) -> list[dict[str, str]]:
     return restored
 
 
-def _content_key(payload) -> str:
-    """Stable content hash used as a cache key for model calls."""
-    return hashlib.sha256(
-        json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
-    ).hexdigest()
+def _json_arg(payload) -> str:
+    """Deterministic JSON passed to the cached model calls.
+
+    The serialized content *is* the cache key: Streamlit hashes the argument, so identical
+    content hits the cache and the model is not re-billed on every rerender. Passing a
+    pre-computed hash here instead would be a bug — the cached function has to parse the
+    argument back into data.
+    """
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
 
 
 @st.cache_data(show_spinner=False)
-def _cached_conflict_enrichment(entries_key: str, facts_key: str, materials_key: str,
+def _cached_conflict_enrichment(entries_json: str, facts_json: str, materials_json: str,
                                 provider_name: str) -> list[dict]:
     """Model enrichment for the conflict matrix, cached on content.
 
@@ -939,40 +943,48 @@ def _cached_conflict_enrichment(entries_key: str, facts_key: str, materials_key:
     """
     from legal_funds_agent.services.evidence_conflict_service import enrich_conflict_entries
 
-    entries = json.loads(entries_key)
+    entries = json.loads(entries_json)
     try:
         provider = provider_from_environment(provider_name)
     except Exception:
         return entries
     return enrich_conflict_entries(
-        entries, json.loads(facts_key), json.loads(materials_key), provider
+        entries, json.loads(facts_json), json.loads(materials_json), provider
     )
 
 
 @st.cache_data(show_spinner=False)
-def _cached_checklist_notes(payload_key: str, provider_name: str) -> dict:
-    """Model rewording of the checklist. ``status`` is deliberately not part of the key."""
+def _cached_checklist_notes(payload_json: str, provider_name: str) -> dict:
+    """Model rewording of the checklist. ``status`` is deliberately not part of the key.
+
+    Returns both the wording and the audit of how it was produced, so a failed or
+    rejected rewrite is surfaced in the UI instead of degrading silently.
+    """
     from legal_funds_agent.services.case_report_service import request_investigation_notes
 
     try:
         provider = provider_from_environment(provider_name)
-    except Exception:
-        return {}
-    notes, _ = request_investigation_notes(json.loads(payload_key), provider)
-    return notes
+    except Exception as exc:
+        return {"notes": {}, "report": {"checked": False, "notes": [f"PROVIDER_UNAVAILABLE:{type(exc).__name__}"]}}
+    notes, report = request_investigation_notes(json.loads(payload_json), provider)
+    return {"notes": notes, "report": report}
 
 
 @st.cache_data(show_spinner=False)
-def _cached_narrative(facts_key: str, provider_name: str) -> dict | None:
-    """Model narrative over the deterministic fact pack, cached on the fact pack."""
+def _cached_narrative(facts_json: str, provider_name: str) -> dict:
+    """Model narrative over the deterministic fact pack, cached on the fact pack.
+
+    Returns the narrative (possibly ``None``) plus the audit explaining why, so the page
+    can tell the operator that the summary was not produced rather than just omitting it.
+    """
     from legal_funds_agent.services.case_narrative_service import generate_narrative_from_facts
 
     try:
         provider = provider_from_environment(provider_name)
-    except Exception:
-        return None
-    narrative, _ = generate_narrative_from_facts(json.loads(facts_key), provider)
-    return narrative
+    except Exception as exc:
+        return {"narrative": None, "audit": {"checked": False, "notes": [f"PROVIDER_UNAVAILABLE:{type(exc).__name__}"]}}
+    narrative, audit = generate_narrative_from_facts(json.loads(facts_json), provider)
+    return {"narrative": narrative, "audit": audit}
 
 
 def _conflict_matrix_for(result, supplementary_documents: list[dict[str, str]]) -> list[dict]:
@@ -998,12 +1010,55 @@ def _conflict_matrix_for(result, supplementary_documents: list[dict[str, str]]) 
     if not materials or not _model_enhancement_enabled():
         return entries
     return _cached_conflict_enrichment(
-        _content_key(entries), _content_key(facts), _content_key(materials), provider_name
+        _json_arg(entries), _json_arg(facts), _json_arg(materials), provider_name
     )
+
+
+def _apply_model_wording(checklist: list[dict], provider_name: str) -> list[dict]:
+    """Reword the checklist via the model, keeping the deterministic facts authoritative.
+
+    Numbers are constrained to each item's own facts, so a rejected rewrite simply keeps
+    the template text. The outcome is reported on the page rather than degrading silently.
+    """
+    from legal_funds_agent.services.case_report_service import apply_investigation_notes
+
+    payload = [
+        {
+            "item_id": item["item_id"],
+            "category": item.get("category"),
+            "priority": item.get("priority"),
+            "target": item.get("target"),
+            "facts": item.get("facts") or {},
+            "current_suggestion": item.get("suggestion"),
+            "current_next_action": item.get("next_action"),
+        }
+        for item in checklist
+    ]
+    if not payload:
+        return checklist
+    outcome = _cached_checklist_notes(_json_arg(payload), provider_name)
+    notes = outcome.get("notes") or {}
+    report = outcome.get("report") or {}
+    if notes:
+        st.caption(f"模型增强：回查建议措辞已改写 {len(notes)} 项。")
+        return apply_investigation_notes(checklist, notes)
+    reason = report.get("rejected") or "；".join(report.get("notes") or []) or "模型未返回改写"
+    st.caption(f"模型增强：回查建议措辞未改写（{reason}）。已保留确定性模板文字。")
+    return checklist
 
 
 def _model_enhancement_enabled() -> bool:
     return bool(st.session_state.get("model_enhancement_enabled", False))
+
+
+PROVIDER_CHOICES = ["mock", "deepseek"]
+
+# Truthy spellings accepted by the ``?enhance=`` URL override.
+TRUTHY_QUERY_VALUES = {"1", "true", "yes"}
+
+
+def _provider_label(value: str) -> str:
+    return "本地 Mock（推荐演示）" if value == "mock" else "DeepSeek API"
 
 
 def _render_fund_flow(graph, *, height: int = 430, key: str | None = None, transactions=None, disputed_names=None) -> None:
@@ -1163,11 +1218,16 @@ def _next_available_case_id(database_path: Path, base: str = "CASE-0001") -> str
     existing = {c["case_id"] for c in cases}
     if base not in existing:
         return base
-    prefix, num_part = base.rsplit("-", 1)
-    try:
-        start = int(num_part)
-    except ValueError:
-        start = 1
+    # Case ids are not guaranteed to be hyphenated — the evaluation package uses
+    # GOLD_CASE_001 — so never assume a "-<number>" suffix is present.
+    if "-" in base:
+        prefix, num_part = base.rsplit("-", 1)
+        try:
+            start = int(num_part)
+        except ValueError:
+            prefix, start = base, 0
+    else:
+        prefix, start = base, 0
     for n in range(start + 1, start + 10000):
         candidate = f"{prefix}-{n:04d}"
         if candidate not in existing:
@@ -1725,6 +1785,7 @@ def _materials_panel(active_case_id: str) -> None:
                         statement_provider=provider,
                         enable_claim_audit=enable_claim_audit,
                         audit_provider=provider,
+                        allow_missing_statement=True,
                         transaction_evidence_id="EVI-BANK-XLSX",
                     )
                     status.update(label=f"GOLD_CASE_001 审查完成：召回 {len(result.candidates)}/{len(result.transactions)} 笔流水，总额 ¥{result.claim.claimed_amount:,.2f}", state="complete")
@@ -1779,6 +1840,7 @@ def _materials_panel(active_case_id: str) -> None:
                     statement_provider=provider,
                     enable_claim_audit=enable_claim_audit,
                     audit_provider=provider,
+                    allow_missing_statement=True,
                     transaction_evidence_id=f"EVI-BANK-{transactions.name.rsplit('.', 1)[-1].upper()}",
                 )
                 st.session_state.result = result
@@ -2496,6 +2558,12 @@ def audit_page(result) -> None:
         for item in checklist:
             if item.get("item_id") in stored_statuses:
                 item["status"] = stored_statuses[item["item_id"]]
+
+        # Reword before the items are drawn: the reviewer should read the same text that
+        # the exported workbook contains, not the pre-enhancement template.
+        if _model_enhancement_enabled():
+            checklist = _apply_model_wording(checklist, provider_name)
+
         checklist = _apply_checklist_statuses(result.claim.case_id, checklist)
         _save_investigation_items(st.session_state.get("repository_path"), result.claim.case_id, checklist)
         master_rep["investigation_checklist"] = checklist
@@ -2510,35 +2578,23 @@ def audit_page(result) -> None:
         )
 
     if _model_enhancement_enabled():
-        from legal_funds_agent.services.case_report_service import apply_investigation_notes
-
-        # Wording only. Numbers are constrained to the item's own facts, so a rejected
-        # rewrite simply keeps the template text.
-        payload = [
-            {
-                "item_id": item["item_id"],
-                "category": item.get("category"),
-                "priority": item.get("priority"),
-                "target": item.get("target"),
-                "facts": item.get("facts") or {},
-                "current_suggestion": item.get("suggestion"),
-                "current_next_action": item.get("next_action"),
-            }
-            for item in checklist
-        ]
-        if payload:
-            notes = _cached_checklist_notes(_content_key(payload), provider_name)
-            if notes:
-                checklist = apply_investigation_notes(checklist, notes)
-                master_rep["investigation_checklist"] = checklist
-
-        from legal_funds_agent.services.case_narrative_service import build_narrative_facts
-
-        narrative = _cached_narrative(
-            _content_key(build_narrative_facts(master_rep)), provider_name
+        from legal_funds_agent.services.case_narrative_service import (
+            build_narrative_facts,
+            narrative_body_html,
         )
-        if narrative:
-            master_rep["narrative"] = narrative
+
+        narrative_outcome = _cached_narrative(
+            _json_arg(build_narrative_facts(master_rep)), provider_name
+        )
+        if narrative_outcome.get("narrative"):
+            master_rep["narrative"] = narrative_outcome["narrative"]
+            st.caption("模型增强：全案审查意见摘要已生成，随底稿 HTML 导出。")
+            render_section_heading("05 / SUMMARY", "全案审查意见摘要", "模型在确定性事实之上的转写，不构成法律结论")
+            st.markdown(narrative_body_html(master_rep["narrative"]), unsafe_allow_html=True)
+        else:
+            audit = narrative_outcome.get("audit") or {}
+            reason = audit.get("rejected") or "；".join(audit.get("notes") or []) or "模型未返回摘要"
+            st.caption(f"模型增强：未生成全案摘要（{reason}）。底稿仍以表格形式完整导出。")
 
     master_html = case_report_to_html(master_rep)
     master_json = case_report_to_json(master_rep)
@@ -2589,10 +2645,19 @@ st.sidebar.markdown("""
 """, unsafe_allow_html=True)
 
 with st.sidebar.expander("模型与规则配置", expanded=False):
+    # URL overrides let a demo link or an automated check open the workbench already
+    # configured, e.g. ?case_id=CASE-0001&provider=deepseek&enhance=1
+    requested_provider = st.query_params.get("provider")
+    if requested_provider in PROVIDER_CHOICES:
+        st.session_state.setdefault("provider_name", requested_provider)
+    if str(st.query_params.get("enhance", "")).strip().lower() in {"1", "true", "yes"}:
+        st.session_state.setdefault("model_enhancement_enabled", True)
+
     provider_name = st.selectbox(
         "模型服务",
-        ["mock", "deepseek"],
-        format_func=lambda value: "本地 Mock（推荐演示）" if value == "mock" else "DeepSeek API",
+        PROVIDER_CHOICES,
+        key="provider_name",
+        format_func=_provider_label,
         help="Mock 不联网；DeepSeek 负责事实主张提取，金额穿透与审查状态始终由确定性规则完成。"
     )
     enable_claim_audit = st.checkbox(
@@ -2602,13 +2667,12 @@ with st.sidebar.expander("模型与规则配置", expanded=False):
     )
     model_enhancement = st.checkbox(
         "启用模型增强",
-        value=False,
+        key="model_enhancement_enabled",
         help=(
             "让模型为冲突比对补充材料引文、为回查建议改写措辞、生成全案摘要。"
             "数字一律由确定性代码提供，模型不得新增；结果按内容缓存，同一案件不会重复计费。"
         ),
     )
-    st.session_state["model_enhancement_enabled"] = model_enhancement
 
 PAGES = [
     "01  案件审查概览",

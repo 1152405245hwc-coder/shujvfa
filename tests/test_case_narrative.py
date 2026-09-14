@@ -14,6 +14,7 @@ from legal_funds_agent.llm.schemas import SCHEMA_CASE_NARRATIVE, SCHEMA_PAYMENT_
 from legal_funds_agent.services.case_narrative_service import (
     build_narrative_facts,
     generate_case_narrative,
+    narrative_body_html,
     narrative_html_section,
 )
 from legal_funds_agent.services.case_report_service import (
@@ -147,6 +148,20 @@ class NarrativeRenderingTest(unittest.TestCase):
     def test_html_section_is_empty_without_a_narrative(self):
         self.assertEqual(narrative_html_section(None), "")
         self.assertEqual(narrative_html_section({"sections": []}), "")
+
+    def test_body_html_has_no_section_number_placeholder(self):
+        """The workbench draws its own heading, so the body must not leak "{no}"."""
+        body = narrative_body_html(
+            {"sections": [{"heading": "覆盖情况", "body": "已确证 30,000.00 元。"}]}
+        )
+        self.assertNotIn("{no}", body)
+        self.assertNotIn("<h2>", body)
+        self.assertIn("覆盖情况", body)
+        self.assertIn("已确证 30,000.00 元。", body)
+
+    def test_body_html_is_empty_without_sections(self):
+        self.assertEqual(narrative_body_html(None), "")
+        self.assertEqual(narrative_body_html({"sections": []}), "")
 
     def test_html_section_renders_headings_and_bodies(self):
         rendered = narrative_html_section(

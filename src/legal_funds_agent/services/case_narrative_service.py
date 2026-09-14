@@ -201,8 +201,13 @@ def generate_case_narrative(
     return generate_narrative_from_facts(build_narrative_facts(report), provider)
 
 
-def narrative_html_section(narrative: dict[str, Any] | None) -> str:
-    """Render the narrative as a readable block, or nothing at all."""
+def narrative_body_html(narrative: dict[str, Any] | None) -> str:
+    """Just the narrative blocks, without a section heading.
+
+    Callers that draw their own heading (the Streamlit workbench) use this; the section
+    wrapper below is for the exported workbook, where the heading carries a section number
+    that only the report assembler can supply.
+    """
     if not narrative or not narrative.get("sections"):
         return ""
     blocks = "".join(
@@ -210,9 +215,17 @@ def narrative_html_section(narrative: dict[str, Any] | None) -> str:
         f"<p>{html.escape(section['body'])}</p>"
         for section in narrative["sections"]
     )
+    return f"<div class='narrative-box'>{blocks}</div>"
+
+
+def narrative_html_section(narrative: dict[str, Any] | None) -> str:
+    """Render the narrative as a readable block, or nothing at all."""
+    body = narrative_body_html(narrative)
+    if not body:
+        return ""
     return (
         "<h2>{no}、全案审查意见摘要</h2>"
         "<p class='section-note'>本节由模型在确定性事实之上转写生成，数字与事实均来自"
         "本底稿的确定性计算结果；摘要不构成法律结论。</p>"
-        f"<div class='narrative-box'>{blocks}</div>"
+        f"{body}"
     )
