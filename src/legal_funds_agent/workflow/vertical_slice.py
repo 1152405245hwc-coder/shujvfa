@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,6 +36,7 @@ from legal_funds_agent.services.statement_extractor import (
     compare_statement_to_claim,
     extract_statement_payment,
 )
+from legal_funds_agent.services.transaction_analysis import transaction_canonical_key
 from legal_funds_agent.services.verification_engine import find_duplicate_transactions, verify_decision
 
 
@@ -181,6 +182,33 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
                 review_required_reasons=review_required_reasons,
             )
             system_decisions_by_claim[c.id] = c_decision
+
+        # Cross-claim pre-warning: one canonical transfer recalled under more than
+        # one claim would be double-counted if every claim included it. Flag the
+        # risk at candidate level so the reviewer sees it before deciding. This is
+        # a warning, not a blocking conflict — the decision how to allocate the
+        # transfer belongs to the human reviewer.
+        key_owners: dict[tuple[str, str, str, str], set[str]] = {}
+        for claim_id, claim_candidates in candidates_by_claim.items():
+            for candidate in claim_candidates:
+                key_owners.setdefault(
+                    transaction_canonical_key(tx_index[candidate.transaction_id]), set()
+                ).add(claim_id)
+        duplicated_keys = {key for key, owners in key_owners.items() if len(owners) > 1}
+        if duplicated_keys:
+            for claim_id, claim_candidates in candidates_by_claim.items():
+                candidates_by_claim[claim_id] = [
+                    replace(
+                        candidate,
+                        risk_codes=tuple(
+                            dict.fromkeys(candidate.risk_codes + ("CROSS_CLAIM_DUPLICATION",))
+                        ),
+                    )
+                    if transaction_canonical_key(tx_index[candidate.transaction_id]) in duplicated_keys
+                    and "CROSS_CLAIM_DUPLICATION" not in candidate.risk_codes
+                    else candidate
+                    for candidate in claim_candidates
+                ]
 
         candidates = candidates_by_claim[claim.id]
         system_decision = system_decisions_by_claim[claim.id]

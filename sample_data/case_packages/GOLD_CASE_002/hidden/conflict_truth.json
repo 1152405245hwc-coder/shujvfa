@@ -1,0 +1,34 @@
+{
+  "issues": [
+    {
+      "id": "ISSUE-01",
+      "title": "马某 A105 账户性质",
+      "expected_status": "CONFLICT",
+      "must_not_conclude": "不得自动认定马某账户由陈某实际控制或马某构成共同犯罪"
+    },
+    {
+      "id": "ISSUE-02",
+      "title": "155万元真实项目支出与所宣传投资权益之间的关系",
+      "expected_status": "QUALIFIED",
+      "must_not_conclude": "不得因存在真实设备采购即认定对被害人的项目投资承诺已履行"
+    },
+    {
+      "id": "ISSUE-03",
+      "title": "孙某代周某支付60万元",
+      "expected_status": "WEAK_SIGNAL_OR_MANUAL_LINK",
+      "must_not_conclude": "严格姓名不匹配时不得静默计入周某覆盖金额"
+    },
+    {
+      "id": "ISSUE-04",
+      "title": "刘某 C1/C4 候选交易 E004 跨 Claim 重叠",
+      "expected_status": "CROSS_CLAIM_DUPLICATION",
+      "must_not_conclude": "同一交易不得同时计入两个 Claim"
+    },
+    {
+      "id": "ISSUE-05",
+      "title": "旧债金额范围",
+      "expected_status": "PARTIAL_SUPPORT",
+      "details": "陈某称约210万元；高某+许某证言及流水独立支持165万元。"
+    }
+  ]
+}

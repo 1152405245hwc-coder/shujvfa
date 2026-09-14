@@ -17,18 +17,29 @@ class StatementPaymentFact:
     victim_name: str
     recipient_name: str | None
     amount: Decimal
-    payment_date: date
+    # None when the statement only anchors the payment by recipient and total
+    # amount ("向陈某账户转了三笔钱……共240万元") without a full calendar date.
+    payment_date: date | None
     source_text: str
     start_offset: int
     end_offset: int
     extraction_source: str = REGEX_SOURCE
 
 
+# An amount may be written as "50000元" or "80万元"; the 万 multiplier is applied
+# by ``_amount_from_match`` so both spellings land on the same Decimal value.
+def _amount_from_match(match: re.Match[str]) -> Decimal:
+    amount = Decimal(match["amount"].replace(",", ""))
+    if match["wan"]:
+        amount *= 10000
+    return amount.quantize(Decimal("0.01"))
+
+
 def _regex_fact(text: str, *, victim_name: str) -> StatementPaymentFact:
     match = re.search(
         r"(?:从)?(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日"
         r".*?(?:按照|向)(?P<recipient>[\u4e00-\u9fff]{1,3}某)(?:的)?(?:要求|指示)?.*?"
-        r"(?:转款|转账|支付|转出|转了|转入|支付了|累计转入).*?(?:人民币)?(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)元",
+        r"(?:转款|转账|支付|转出|转了|转入|支付了|累计转入).*?(?:人民币)?(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?P<wan>万)?元",
         text,
         re.DOTALL,
     )
@@ -36,17 +47,34 @@ def _regex_fact(text: str, *, victim_name: str) -> StatementPaymentFact:
         match = re.search(
             r"(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日"
             r".*?(?:转入|转给|转账给|付给)(?P<recipient>[\u4e00-\u9fff]{1,3}某).*?"
-            r"(?:人民币)?(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)元",
+            r"(?:人民币)?(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?P<wan>万)?元",
             text,
             re.DOTALL,
         )
+    if match:
+        return StatementPaymentFact(
+            victim_name=victim_name,
+            recipient_name=match["recipient"],
+            amount=_amount_from_match(match),
+            payment_date=date(int(match["year"]), int(match["month"]), int(match["day"])),
+            source_text=match.group(0), start_offset=match.start(), end_offset=match.end(),
+        )
+    # Fallback for statements that name the recipient and the total but never
+    # write a full calendar date ("向陈某本人账户转了三笔钱，每笔80万元，共240万元").
+    # Only a total marked by 共/共计/累计 qualifies: a partial instalment amount
+    # would be dressed up as the whole payment and fabricate an amount conflict.
+    match = re.search(
+        r"(?:向|给)(?P<recipient>[一-鿿]{1,3}某)(?:本人)?(?:的)?(?:账户|要求|指示)?[^。；;]*?"
+        r"(?:共|共计|累计)(?:人民币)?(?P<amount>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?P<wan>万)?元",
+        text,
+    )
     if not match:
         raise ValueError("victim statement payment fact could not be extracted")
     return StatementPaymentFact(
         victim_name=victim_name,
         recipient_name=match["recipient"],
-        amount=Decimal(match["amount"].replace(",", "")).quantize(Decimal("0.01")),
-        payment_date=date(int(match["year"]), int(match["month"]), int(match["day"])),
+        amount=_amount_from_match(match),
+        payment_date=None,
         source_text=match.group(0), start_offset=match.start(), end_offset=match.end(),
     )
 
@@ -139,7 +167,7 @@ def compare_statement_to_claim(fact: StatementPaymentFact, claim: Claim) -> list
     conflicts: list[str] = []
     if fact.amount != claim.claimed_amount:
         conflicts.append("STATEMENT_AMOUNT_CONFLICT")
-    if not (claim.time_start <= fact.payment_date <= claim.time_end):
+    if fact.payment_date is not None and not (claim.time_start <= fact.payment_date <= claim.time_end):
         conflicts.append("STATEMENT_DATE_CONFLICT")
     if claim.alleged_recipient_name and fact.recipient_name != claim.alleged_recipient_name:
         conflicts.append("STATEMENT_RECIPIENT_CONFLICT")

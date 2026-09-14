@@ -1,0 +1,7 @@
+{
+  "expected_overlap_event": "E004",
+  "claim_a": "C1",
+  "claim_b": "C4",
+  "reason": "E004=2025-05-02；C1 截止 2025-04-30，在默认+3日召回窗口内；同时处于C4严格范围内。",
+  "expected_risk": "CROSS_CLAIM_DUPLICATION"
+}

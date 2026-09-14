@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from datetime import timedelta
+from decimal import Decimal
 from legal_funds_agent.domain.models import Claim, Transaction
 
 
@@ -74,6 +76,16 @@ def _claim_account_ids(claim: Claim, *, side: str) -> set[str]:
     return account_ids
 
 
+# A victim's ordinary life spending (merchants, utilities, mortgage) must not turn
+# every counterparty into a "related account", or any later inflow from those
+# accounts — a consumption refund, a reimbursement — would be surfaced as a
+# suspected case refund. Only an account that received a substantial victim
+# transfer inside a claim's time window qualifies as case-related below this
+# recall filter; the final nature of each refund remains a human decision.
+RELATED_ACCOUNT_MIN_AMOUNT = Decimal("50000")
+_RELATED_WINDOW_DAYS = 3
+
+
 def identify_refund_transactions(
     claims: Iterable[Claim], transactions: Iterable[Transaction]
 ) -> list[Transaction]:
@@ -99,8 +111,8 @@ def identify_refund_transactions(
         if claim.victim_account:
             victim_account_refs.add(normalize_account_reference(claim.victim_account))
 
-    # Accounts receiving a payment from a victim are related accounts for this
-    # case, including an intermediary such as A005.
+    # Accounts receiving a substantial in-window payment from a victim are related
+    # accounts for this case, including an intermediary such as A005.
     related_account_ids = set(victim_account_ids)
     related_names = set(recipient_names)
     for claim in claims_list:
@@ -109,14 +121,25 @@ def identify_refund_transactions(
     for tx in unique:
         payer_name = normalize_party_name(tx.payer_name)
         payee_name = normalize_party_name(tx.payee_name)
-        if payer_name in victim_names:
-            if tx.payee_account_id:
-                related_account_ids.add(tx.payee_account_id)
-            normalized_payee_account = normalize_account_reference(tx.payee_account)
-            if normalized_payee_account:
-                related_account_ids.add(normalized_payee_account)
-            if payee_name:
-                related_names.add(payee_name)
+        if payer_name not in victim_names or tx.amount < RELATED_ACCOUNT_MIN_AMOUNT:
+            continue
+        in_window = any(
+            claim.time_start is None
+            or claim.time_end is None
+            or claim.time_start - timedelta(days=_RELATED_WINDOW_DAYS)
+            <= tx.date <=
+            claim.time_end + timedelta(days=_RELATED_WINDOW_DAYS)
+            for claim in claims_list
+        )
+        if not in_window:
+            continue
+        if tx.payee_account_id:
+            related_account_ids.add(tx.payee_account_id)
+        normalized_payee_account = normalize_account_reference(tx.payee_account)
+        if normalized_payee_account:
+            related_account_ids.add(normalized_payee_account)
+        if payee_name:
+            related_names.add(payee_name)
 
     refunds: list[Transaction] = []
     for tx in unique:
