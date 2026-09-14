@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from typing import Any
 
 from legal_funds_agent.llm.schemas import SCHEMA_CLAIM_AUDIT, SCHEMA_PAYMENT_CLAIM
@@ -9,6 +10,27 @@ from legal_funds_agent.llm.schemas import SCHEMA_CLAIM_AUDIT, SCHEMA_PAYMENT_CLA
 # answer without a network call; anything else must be handled by the caller's
 # deterministic fallback rather than by a silent empty answer.
 MOCK_SUPPORTED_SCHEMAS = (SCHEMA_PAYMENT_CLAIM, SCHEMA_CLAIM_AUDIT)
+
+# Sentence-level directed-payment phrasings seen in demo indictments. Matching is
+# confined to a single sentence (no 。 or newline) so the amount always belongs to
+# the same payment as the victim/recipient pair.
+_AMOUNT_TAIL = r"人民币?\s*(?P<num>[\d,]+(?:\.\d+)?)\s*(?P<unit>万元|亿元|万|亿|元)"
+_DIRECTED_RE = re.compile(
+    r"(?P<victim>[\u4e00-\u9fff]{1,2}某)[^。\n]*?按照(?P<recipient>[\u4e00-\u9fff]{1,2}某)(?:指示|要求)"
+    r"[^。\n]*?" + _AMOUNT_TAIL
+)
+# "刘某基于陈某关于'追加内部份额'的说明，再次支付款项共计人民币120万元" (GOLD_CASE_002 C4).
+_BASIS_RE = re.compile(
+    r"(?P<victim>[\u4e00-\u9fff]{1,2}某)[^。\n]*?基于(?P<recipient>[\u4e00-\u9fff]{1,2}某)[^。\n]*?"
+    + _AMOUNT_TAIL
+)
+_UNIT_MULTIPLIERS = {
+    "元": Decimal("1"),
+    "万元": Decimal("10000"),
+    "万": Decimal("10000"),
+    "亿元": Decimal("100000000"),
+    "亿": Decimal("100000000"),
+}
 
 
 class MockProvider:
@@ -75,29 +97,43 @@ class MockProvider:
         match = self._find_amount_match(text)
         return match.group(1).replace(",", "") if match else None
 
+    @staticmethod
+    def _amount_to_yuan(num: str, unit: str) -> str:
+        value = Decimal(num.replace(",", "")) * _UNIT_MULTIPLIERS[unit]
+        return str(int(value)) if value == value.to_integral_value() else str(value)
+
+    def _directed_claim_rows(self, text: str) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for sentence in re.finditer(r"[^。\n]+", text):
+            snippet = sentence.group(0)
+            base = sentence.start()
+            matched = False
+            for pattern in (_DIRECTED_RE, _BASIS_RE):
+                for m in pattern.finditer(snippet):
+                    t_start, t_end = self._parse_dates(snippet)
+                    if t_start is None:
+                        t_start, t_end = self._parse_dates(text)
+                    rows.append({
+                        "victim_name": m["victim"],
+                        "alleged_recipient_name": m["recipient"],
+                        "claimed_amount": self._amount_to_yuan(m["num"], m["unit"]),
+                        "time_start": t_start,
+                        "time_end": t_end,
+                        "source_text": m.group(0),
+                        "start_offset": base + m.start(),
+                        "end_offset": base + m.end(),
+                    })
+                    matched = True
+                if matched:
+                    # A sentence is accounted for by its most specific phrasing only,
+                    # so the fallback pattern never duplicates the same payment.
+                    break
+        return rows
+
     def _payment_claims(self, text: str) -> list[dict[str, Any]]:
-        # Generic pattern: "victim 按照 recipient 指示 ... amount" (common in indictments).
-        directed_match = re.search(
-            r"(?P<victim>[\u4e00-\u9fff]{1,2}某).*?按照(?P<recipient>[\u4e00-\u9fff]{1,2}某)指示",
-            text,
-        )
-        if directed_match:
-            t_start, t_end = self._parse_dates(text)
-            amount_match = self._find_amount_match(text[directed_match.start():])
-            if amount_match is None:
-                raise ValueError("mock provider could not extract the demo payment claim")
-            amount_str = amount_match.group(1).replace(",", "")
-            end_offset = directed_match.start() + amount_match.end()
-            return [{
-                "victim_name": directed_match["victim"],
-                "alleged_recipient_name": directed_match["recipient"],
-                "claimed_amount": amount_str,
-                "time_start": t_start,
-                "time_end": t_end,
-                "source_text": text[directed_match.start():end_offset],
-                "start_offset": directed_match.start(),
-                "end_offset": end_offset,
-            }]
+        rows = self._directed_claim_rows(text)
+        if rows:
+            return rows
 
         match = re.search(
             r"(?P<recipient>[\u4e00-\u9fff]{1,3}某).*?于(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日"
