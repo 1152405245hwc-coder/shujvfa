@@ -1,0 +1,279 @@
+{
+  "provider": "mock",
+  "sections": [
+    {
+      "title": "1. 主张提取",
+      "rows": [
+        {
+          "item": "主张数量",
+          "expected": "4 个",
+          "actual": "4 个",
+          "ok": true
+        },
+        {
+          "item": "主张总额",
+          "expected": "700.00万",
+          "actual": "700.00万",
+          "ok": true
+        },
+        {
+          "item": "主张 C1（刘某 240.00万 2025-03-20~2025-04-30）",
+          "expected": "刘某/陈某/2400000.00/2025-03-20~2025-04-30",
+          "actual": "刘某/陈某/2400000.00/2025-03-20~2025-04-30 (id=CLM-GOLD_CASE_002-001)",
+          "ok": true
+        },
+        {
+          "item": "主张 C2（周某 180.00万 2025-04-12~2025-04-22）",
+          "expected": "周某/陈某/1800000.00/2025-04-12~2025-04-22",
+          "actual": "周某/陈某/1800000.00/2025-04-12~2025-04-22 (id=CLM-GOLD_CASE_002-002)",
+          "ok": true
+        },
+        {
+          "item": "主张 C3（郑某 160.00万 2025-06-05~2025-06-12）",
+          "expected": "郑某/陈某/1600000.00/2025-06-05~2025-06-12",
+          "actual": "郑某/陈某/1600000.00/2025-06-05~2025-06-12 (id=CLM-GOLD_CASE_002-003)",
+          "ok": true
+        },
+        {
+          "item": "主张 C4（刘某 120.00万 2025-05-01~2025-05-20）",
+          "expected": "刘某/陈某/1200000.00/2025-05-01~2025-05-20",
+          "actual": "刘某/陈某/1200000.00/2025-05-01~2025-05-20 (id=CLM-GOLD_CASE_002-004)",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "title": "2. 交易归一",
+      "rows": [
+        {
+          "item": "unique canonical 事件数",
+          "expected": "32",
+          "actual": "193",
+          "ok": false
+        },
+        {
+          "item": "原始行导入 skip 数",
+          "expected": "0（原始 208 行全部导入）",
+          "actual": "skip=0（csv数据行≈208）",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "title": "3. 重复/镜像组与跨主张风险",
+      "rows": [
+        {
+          "item": "E004 镜像行 (TX-B201-00004 / TX-A101-00003)",
+          "expected": "两条流水同时存在且归入同一 duplicate_group",
+          "actual": "识别到 ['TX-A101-00003', 'TX-B201-00004']；同组=True",
+          "ok": true
+        },
+        {
+          "item": "CROSS_CLAIM_DUPLICATION 打在 E004 两条流水上（C1 召回窗口 + C4 严格范围）",
+          "expected": "E004 候选在 C1 与 C4 下均带 CROSS_CLAIM_DUPLICATION",
+          "actual": {
+            "CLM-GOLD_CASE_002-001": [
+              "CROSS_CLAIM_DUPLICATION"
+            ],
+            "CLM-GOLD_CASE_002-004": [
+              "CROSS_CLAIM_DUPLICATION"
+            ]
+          },
+          "ok": true
+        }
+      ]
+    },
+    {
+      "title": "4. 第三方账户（马某 A105）阻断",
+      "rows": [
+        {
+          "item": "A105 直接收被害人款项笔数/金额",
+          "expected": "2 笔，共 140 万（E005 60万 + E010 80万）",
+          "actual": "2 笔，共 140.00万 [('2025-05-12', '600000.00'), ('2025-06-12', '800000.00')]",
+          "ok": true
+        },
+        {
+          "item": "第三方候选风险标注",
+          "expected": "THIRD_PARTY_RECIPIENT + blocking_conflict",
+          "actual": "全部带风险=True；{'TX-A105-00002': ['THIRD_PARTY_RECIPIENT'], 'TX-A105-00001': ['THIRD_PARTY_RECIPIENT']}",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "title": "5. 孙某代付缺口（E007）",
+      "rows": [
+        {
+          "item": "E007 严格候选（预期漏召）",
+          "expected": "TX-B204-00001 不进入周某 C2 严格候选",
+          "actual": "E007=['TX-A102-00003', 'TX-B204-00001']；周某严格候选含 E007=False",
+          "ok": true
+        },
+        {
+          "item": "E007 弱线索暴露",
+          "expected": "出现在 weak_signals_by_claim 的周某 claim 下",
+          "actual": "弱线索命中=[('TX-A102-00003', 'PARTIAL')]",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "title": "6. 疑似转回识别",
+      "rows": [
+        {
+          "item": "疑似转回笔数/金额",
+          "expected": "5 笔，共 115.00万",
+          "actual": "5 笔，共 115.00万 [('2025-07-05', '300000.00', 'A101', '201 6222 0202 0000 0201'), ('2025-07-08', '150000.00', 'A105', '201 6222 0202 0000 0201'), ('2025-07-10', '250000.00', 'A102', '202 6222 0202 0000 0202'), ('2025-07-12', '200000.00', 'A101', '203 6222 0202 0000 0203'), ('2025-07-15', '250000.00', 'A101', '201 6222 0202 0000 0201')]",
+          "ok": true
+        },
+        {
+          "item": "禁止自动冲减（700-115=585）",
+          "expected": "不得把 585 万当作犯罪金额输出",
+          "actual": "decision 文本中出现 585=False（decision 只表达 covered/uncovered 覆盖语义）",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "title": "7. 别名解析",
+      "rows": [
+        {
+          "item": "主流程别名提议（马会计→马某，需人工确认）",
+          "expected": "系统提出候选且标记待人工确认",
+          "actual": "主流程未自动提议任何别名（alias_registry 为空/None）（主流程差距，如实报告）",
+          "ok": false
+        },
+        {
+          "item": "辅助服务 propose_alias_groups 探测",
+          "expected": "可提出候选且保留待确认状态",
+          "actual": "{\"checked\": false, \"groups\": [], \"notes\": [\"PARTY_ALIAS_UNSUPPORTED_BY_PROVIDER\"]}",
+          "ok": null
+        },
+        {
+          "item": "“马师傅”不得自动合并为马某",
+          "expected": "不得合并",
+          "actual": "主流程与辅助探测均未执行自动合并（合并仅在人工确认后生效）",
+          "ok": true
+        }
+      ]
+    },
+    {
+      "title": "8. conflict_truth 五个 ISSUE",
+      "rows": [
+        {
+          "item": "ISSUE-01 马某A105账户性质（期望 CONFLICT）",
+          "expected": "不得自动认定马某账户由陈某实际控制或马某构成共同犯罪",
+          "actual": "A105 直收被害人候选均阻断: {\"TX-A105-00002\": {\"amount\": \"800000.00\", \"risk\": [\"THIRD_PARTY_RECIPIENT\"], \"claim\": \"CLM-GOLD_CASE_002-003\"}, \"TX-A105-00001\": {\"amount\": \"600000.00\", \"risk\": [\"THIRD_PARTY_RECIPIENT\"], \"claim\": \"CLM-GOLD_CASE_002-004\"}}；系统未自动认定共同犯罪/实际控制（decision 仅给出覆盖与复核状态）",
+          "ok": true
+        },
+        {
+          "item": "ISSUE-02 155万真实支出与投资权益（期望 QUALIFIED）",
+          "expected": "不得因存在真实设备采购即认定对被害人的项目投资承诺已履行",
+          "actual": "主流水线不对支出用途定性，亦不输出“承诺已履行”结论；该项属于审查判断，需人工结合项目资料材料认定",
+          "ok": null
+        },
+        {
+          "item": "ISSUE-03 孙某代付60万（期望 WEAK_SIGNAL_OR_MANUAL_LINK）",
+          "expected": "严格姓名不匹配时不得静默计入周某覆盖金额",
+          "actual": "严格候选漏召=是；弱线索暴露=True；未静默计入周某覆盖金额",
+          "ok": true
+        },
+        {
+          "item": "ISSUE-04 E004 跨 Claim 重叠（期望 CROSS_CLAIM_DUPLICATION）",
+          "expected": "同一交易不得同时计入两个 Claim",
+          "actual": "跨主张风险标注: {'CLM-GOLD_CASE_002-001': ['CROSS_CLAIM_DUPLICATION'], 'CLM-GOLD_CASE_002-004': ['CROSS_CLAIM_DUPLICATION']}",
+          "ok": true
+        },
+        {
+          "item": "ISSUE-05 旧债金额范围（期望 PARTIAL_SUPPORT）",
+          "expected": "陈某称约210万；独立支持165万（需人工比对供述与证言）",
+          "actual": "主流水线不汇总旧债支持度；属人工审查项",
+          "ok": null
+        }
+      ]
+    },
+    {
+      "title": "9. question_bank 十二问",
+      "rows": [
+        {
+          "item": "Q01 起诉书中共有几个付款主张？总额是多少？",
+          "expected": "4个；700万元",
+          "actual": "4个主张，共700.00万",
+          "ok": true
+        },
+        {
+          "item": "Q02 严格按被害人本人付款人姓名匹配，周某180万元中哪一笔可能漏召？",
+          "expected": "孙某代付60万元（E007）",
+          "actual": "孙某代付60万（E007）未进严格候选（弱线索暴露）",
+          "ok": true
+        },
+        {
+          "item": "Q03 第三方账户马某A105共直接接收两名被害人多少款项？",
+          "expected": "140万元",
+          "actual": "A105 直收两名被害人 140.00万（2笔）",
+          "ok": true
+        },
+        {
+          "item": "Q04 哪些材料支持‘马会计’可能指马某？",
+          "expected": "刘某/郑某陈述、陈某供述、聊天记录；仍需人工确认",
+          "actual": "辅助探测被支持性/证据校验拒绝或未执行 notes=['PARTY_ALIAS_UNSUPPORTED_BY_PROVIDER']",
+          "ok": null
+        },
+        {
+          "item": "Q05 ‘马师傅’能否与马某自动合并？",
+          "expected": "不能",
+          "actual": "不能；系统未自动合并",
+          "ok": true
+        },
+        {
+          "item": "Q06 真实项目/设备相关支出共多少？",
+          "expected": "155万元",
+          "actual": "主流水线无支出用途分类模块（需人工/专项分析）",
+          "ok": null
+        },
+        {
+          "item": "Q07 真实设备采购能否直接证明对被害人的投资承诺已经履行？",
+          "expected": "不能",
+          "actual": "系统不输出“承诺已履行”类结论（需人工）",
+          "ok": null
+        },
+        {
+          "item": "Q08 旧债有多少获得高某、许某及流水的独立支持？",
+          "expected": "165万元",
+          "actual": "主流水线不计算旧债独立支持度（需人工）",
+          "ok": null
+        },
+        {
+          "item": "Q09 陈某自述旧债约多少？与独立支持金额差多少？",
+          "expected": "约210万元；差45万元",
+          "actual": "主流水线不汇总陈某供述金额（需人工）",
+          "ok": null
+        },
+        {
+          "item": "Q10 疑似向三名被害人转回多少？",
+          "expected": "115万元",
+          "actual": "疑似转回 115.00万（5笔，待核验性质）",
+          "ok": true
+        },
+        {
+          "item": "Q11 系统能否直接以700-115=585万元作为犯罪金额？",
+          "expected": "不能",
+          "actual": "不能；decision 只表达覆盖语义，未输出 585 万",
+          "ok": true
+        },
+        {
+          "item": "Q12 哪一笔交易预期同时被刘某两个Claim召回？",
+          "expected": "E004（银行流水中对应A101/B201镜像行）",
+          "actual": "E004（2025-05-02，60万）同时被 ['CLM-GOLD_CASE_002-001', 'CLM-GOLD_CASE_002-004'] 召回并标注跨主张重复",
+          "ok": true
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "match": 26,
+    "mismatch": 2,
+    "unverifiable": 8,
+    "total": 36
+  }
+}

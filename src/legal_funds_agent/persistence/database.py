@@ -42,6 +42,33 @@ CREATE TABLE IF NOT EXISTS investigation_items (
     payload_json TEXT NOT NULL,
     PRIMARY KEY(case_id, item_id)
 );
+CREATE TABLE IF NOT EXISTS case_snapshots (
+    case_id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS case_meta (
+    case_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+# Idempotent migration for databases created before case_snapshots existed.
+# Existing files already pass the `claims` table check in connect(), so the
+# full SCHEMA script never runs for them; each new mutable table must also be
+# ensured here.
+MIGRATIONS = """
+CREATE TABLE IF NOT EXISTS case_snapshots (
+    case_id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS case_meta (
+    case_id TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -55,4 +82,6 @@ def connect(path: str | Path) -> sqlite3.Connection:
     ).fetchone()
     if not initialized:
         connection.executescript(SCHEMA)
+    else:
+        connection.executescript(MIGRATIONS)
     return connection

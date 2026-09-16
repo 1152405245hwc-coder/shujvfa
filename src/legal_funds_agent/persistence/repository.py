@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from typing import Any
 
 from legal_funds_agent.audit.logger import AuditEvent
@@ -128,6 +129,14 @@ class Repository:
             FROM transactions t
             WHERE t.case_id NOT IN (SELECT DISTINCT case_id FROM claims)
             GROUP BY t.case_id
+            UNION
+            SELECT s.case_id,
+                   (SELECT COUNT(*) FROM case_snapshots s2 WHERE s2.case_id = s.case_id) as claim_count,
+                   0 as tx_count,
+                   (SELECT COUNT(*) FROM decisions d WHERE d.case_id = s.case_id) as decision_count
+            FROM case_snapshots s
+            WHERE s.case_id NOT IN (SELECT DISTINCT case_id FROM claims)
+              AND s.case_id NOT IN (SELECT DISTINCT case_id FROM transactions)
             """
         ).fetchall()
         return [
@@ -145,6 +154,101 @@ class Repository:
             "SELECT payload_json FROM claims WHERE case_id = ? ORDER BY id", (case_id,)
         ).fetchall()
         return [Claim.model_validate_json(row["payload_json"]) for row in rows]
+
+    def delete_case(self, case_id: str) -> None:
+        """Delete one locally persisted case and all of its mutable/immutable rows.
+
+        This is intentionally scoped to an exact case id. Original uploaded Word,
+        Excel and other evidence files are never touched; the repository only
+        stores the脱敏 checkpoint and audit metadata in SQLite.
+        """
+        tables = (
+            "investigation_items",
+            "audit_events",
+            "decisions",
+            "transactions",
+            "claims",
+            "case_snapshots",
+            "case_meta",
+        )
+        try:
+            self.connection.execute("BEGIN")
+            for table in tables:
+                self.connection.execute(f"DELETE FROM {table} WHERE case_id = ?", (case_id,))
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+
+    def save_case_snapshot(self, case_id: str, claims: list[Claim]) -> None:
+        """Upsert the mutable workbench state of a case's claim list.
+
+        The claims table is an immutable signing record: a row only lands
+        there after human confirmation, so unconfirmed model-extracted claims
+        would be lost on UI reload. The snapshot is separate mutable state
+        that preserves the full in-progress claim list; restoration should
+        combine confirmed claims from `claims` with the snapshot to recover
+        claims that were never confirmed. Account numbers are masked for the
+        same reason as save_claim.
+        """
+        payload = {
+            "case_id": case_id,
+            "claims": [],
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+        }
+        for claim in claims:
+            item = claim.model_dump(mode="json")
+            item["victim_account"] = _mask_account(claim.victim_account)
+            item["alleged_recipient_account"] = _mask_account(claim.alleged_recipient_account)
+            payload["claims"].append(item)
+        self.connection.execute(
+            """
+            INSERT INTO case_snapshots(case_id, payload_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(case_id) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                updated_at = excluded.updated_at
+            """,
+            (case_id, json.dumps(payload, ensure_ascii=False), payload["saved_at"]),
+        )
+        self.connection.commit()
+
+    def load_case_snapshot(self, case_id: str) -> list[Claim] | None:
+        """Restore the snapshot claim list, or None when no snapshot exists."""
+        row = self.connection.execute(
+            "SELECT payload_json FROM case_snapshots WHERE case_id = ?", (case_id,)
+        ).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row["payload_json"])
+        return [Claim.model_validate(item) for item in payload.get("claims", [])]
+
+    def save_case_display_name(self, case_id: str, display_name: str) -> None:
+        """Store a human-chosen display alias for a case.
+
+        The case id is the join key of every immutable record and never
+        changes; the display name is mutable presentation-only metadata kept
+        in a separate table so renaming a case can never touch signed claims
+        or decisions.
+        """
+        self.connection.execute(
+            """
+            INSERT INTO case_meta(case_id, display_name, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(case_id) DO UPDATE SET
+                display_name = excluded.display_name,
+                updated_at = excluded.updated_at
+            """,
+            (case_id, display_name, datetime.now(timezone.utc).isoformat()),
+        )
+        self.connection.commit()
+
+    def load_case_display_names(self) -> dict[str, str]:
+        """Return all case display aliases keyed by case_id."""
+        rows = self.connection.execute(
+            "SELECT case_id, display_name FROM case_meta"
+        ).fetchall()
+        return {row["case_id"]: row["display_name"] for row in rows}
 
     def load_case_transactions(self, case_id: str) -> dict[str, Transaction]:
         rows = self.connection.execute(

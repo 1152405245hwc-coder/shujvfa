@@ -20,6 +20,7 @@ for _p in (str(SRC), str(UI_DIR)):
         sys.path.insert(0, _p)
 
 import streamlit as st
+import streamlit.components.v1 as components_v1
 
 from legal_funds_agent.persistence.database import connect
 from legal_funds_agent.persistence.repository import Repository
@@ -104,6 +105,10 @@ section.main > div {
 
 /* Hide default streamlit clutter */
 [data-testid="stAppDeployButton"], [data-testid="stMainMenuButton"] {
+    display: none !important;
+}
+/* Hide the auto anchor-link icon (🔗) that Streamlit 1.62 adds next to headings */
+[data-testid="stHeaderActionElements"] {
     display: none !important;
 }
 [data-testid="stSidebarCollapseButton"], [data-testid="stSidebarCollapseButton"] button,
@@ -191,6 +196,32 @@ section.main > div {
     margin: 0;
     font-size: 16.5px;
     letter-spacing: 0.02em;
+}
+/* The navigation is rendered as buttons for reliable jumps, but keeps the
+   former radio/link visual language: flat white surface, left alignment and
+   navy active marker instead of a dark filled primary button. */
+[data-testid="stSidebar"] .stButton button[aria-label*="案件审查概览"],
+[data-testid="stSidebar"] .stButton button[aria-label*="涉案资金流水"],
+[data-testid="stSidebar"] .stButton button[aria-label*="资金证据核验"],
+[data-testid="stSidebar"] .stButton button[aria-label*="审查底稿留痕"] {
+    min-height: 44px !important;
+    justify-content: flex-start !important;
+    text-align: left !important;
+    border: 0 !important;
+    border-left: 2px solid transparent !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: var(--ink) !important;
+    font-size: 16.5px !important;
+    font-weight: 550 !important;
+    padding-left: 14px !important;
+}
+[data-testid="stSidebar"] .stButton button[aria-label*="案件审查概览"]:hover,
+[data-testid="stSidebar"] .stButton button[aria-label*="涉案资金流水"]:hover,
+[data-testid="stSidebar"] .stButton button[aria-label*="资金证据核验"]:hover,
+[data-testid="stSidebar"] .stButton button[aria-label*="审查底稿留痕"]:hover {
+    background: #f0f2f4 !important;
+    border-left-color: #bcc3cd !important;
 }
 
 /* Swiss Editorial Masthead */
@@ -870,11 +901,39 @@ div[data-testid="stExpander"] {
 </style>
 """, unsafe_allow_html=True)
 
+# 拦截 Streamlit 前端把裸 c/r 键绑成快捷键的行为：焦点在页面空白处按 Ctrl+C 复制时
+# 会误触发“Clear caches”对话框。组件 iframe sandbox 含 allow-same-origin，可安全访问父窗口。
+components_v1.html("""
+<script>
+(function(){
+  try {
+    var w = window.parent;
+    if (!w || w.__kcInterceptorInstalled) return;
+    w.__kcInterceptorInstalled = true;
+    w.addEventListener('keydown', function(e){
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C' || e.key === 'r' || e.key === 'R')) {
+        e.stopImmediatePropagation();
+      }
+    }, true);
+  } catch (err) { /* cross-origin sandbox: give up silently */ }
+})();
+</script>
+""", height=0)
+
 
 def _mask(value: str | None) -> str:
     if not value:
         return "-"
     return "*" * max(len(value) - 4, 0) + value[-4:]
+
+
+def _load_case_display_names() -> dict[str, str]:
+    """Display aliases for saved cases; the case id itself is immutable."""
+    database_path = ROOT / "data" / "cases.db"
+    if not database_path.exists():
+        return {}
+    with closing(connect(database_path)) as connection:
+        return Repository(connection).load_case_display_names()
 
 
 def _load_demo(provider):
@@ -892,6 +951,10 @@ def _persist_result(result, *, audit_events=None) -> Path:
         for c in claims_to_save:
             if c and c.extraction_status == "human_confirmed":
                 repository.save_claim(c)
+        # The immutable claims table only holds signed (human_confirmed) claims.
+        # Keep the full extraction set in the mutable snapshot so that a restore
+        # does not silently drop claims the reviewer has not confirmed yet.
+        repository.save_case_snapshot(result.claim.case_id, claims_to_save)
         # Only the model-produced baseline belongs in the initial checkpoint.
         # Human decisions are immutable signed records and are saved separately
         # after the review has passed verification.
@@ -1143,7 +1206,16 @@ def _render_fund_flow(graph, *, height: int = 430, key: str | None = None, trans
 
 def _save_confirmed_claim(database_path: Path, claim) -> None:
     with closing(connect(database_path)) as connection:
-        Repository(connection).save_claim(claim)
+        repository = Repository(connection)
+        repository.save_claim(claim)
+        # Keep the mutable snapshot in sync so a later restore sees the
+        # confirmed status instead of the pre-confirmation extraction.
+        snapshot = repository.load_case_snapshot(claim.case_id)
+        if snapshot is not None:
+            updated = [claim if c.id == claim.id else c for c in snapshot]
+            if all(c.id != claim.id for c in snapshot):
+                updated.append(claim)
+            repository.save_case_snapshot(claim.case_id, updated)
 
 
 def _decision_core_payload(decision: ReviewDecision) -> dict:
@@ -1240,7 +1312,10 @@ def _restore_case_from_database(database_path: Path, case_id: str):
     """Rebuild the in-memory workflow view from the immutable local snapshot."""
     with closing(connect(database_path)) as connection:
         repository = Repository(connection)
-        claims = repository.load_case_claims(case_id)
+        # The mutable extraction snapshot preserves every extracted claim
+        # (including unconfirmed ones); the immutable claims table only holds
+        # signed claims. Prefer the snapshot so multi-claim cases restore whole.
+        claims = repository.load_case_snapshot(case_id) or repository.load_case_claims(case_id)
         transactions = repository.load_case_transactions(case_id)
         decisions = repository.load_latest_decisions_by_claim(case_id)
         audit_events = repository.load_case_audit_events(case_id)
@@ -1338,6 +1413,8 @@ def render_case_masthead(
     review_stage: str = "模拟案件",
 ) -> None:
     """Render the single Swiss editorial case heading shared by the workspaces."""
+    if not case_name:
+        case_name = _load_case_display_names().get(case_id)
     if not case_name:
         if case_id == "GOLD_CASE_001":
             title = "何某涉嫌诈骗案"
@@ -1694,7 +1771,7 @@ def case_page() -> None:
     render_case_masthead(active_case_id, status=update_label, data_classification=data_label)
     if current_result is not None:
         _case_overview()
-        with st.expander("材料管理 · 新建或切换案件", expanded=False):
+        with st.expander("材料管理 · 新建或切换案件", expanded=st.session_state.pop("materials_panel_expanded", False)):
             _materials_panel(active_case_id)
     else:
         _materials_panel(active_case_id)
@@ -2073,10 +2150,35 @@ def transactions_page(result) -> None:
         else:
             pay_txs.append((tx, item))
 
-    all_rows = [transaction_row(tx) for tx in result.transactions.values()]
+    all_rows = [(tx, transaction_row(tx)) for tx in result.transactions.values()]
 
     sum_pay = sum((t[0].amount for t in pay_txs), Decimal("0"))
     sum_refund = sum((t[0].amount for t in refund_txs), Decimal("0"))
+
+    def _tx_search_text(tx) -> str:
+        """检索串基于原始字段构建（含未脱敏完整账号），展示列仍为脱敏值。"""
+        parts = [
+            tx.transaction_id, tx.payer_name, tx.payer_account, tx.payer_account_id,
+            tx.payee_name, tx.payee_account, tx.payee_account_id, tx.remark,
+            tx.source_row, str(tx.amount), str(tx.date),
+        ]
+        return " ".join(str(p).lower() for p in parts if p is not None)
+
+    query = st.text_input(
+        "快速检索姓名、账号、账户ID或流水号",
+        placeholder="例如：朱某、何某、林某、A005、完整银行账号、0022025000009",
+        help="三个台账共用同一检索条件；支持完整银行账号（展示表格仍为脱敏值）、姓名、账户ID、流水号、金额与日期。",
+    )
+
+    def _filter_txs(pairs):
+        if not query:
+            return list(pairs)
+        needle = query.strip().lower()
+        return [(tx, item) for tx, item in pairs if needle in _tx_search_text(tx)]
+
+    pay_txs_filtered = _filter_txs(pay_txs)
+    refund_txs_filtered = _filter_txs(refund_txs)
+    all_rows_filtered = _filter_txs(all_rows)
 
     tab_pay, tab_refund, tab_all, tab_graph = st.tabs([
         f"涉案流出支付流水 ({len(pay_txs)} 笔 · ¥{sum_pay:,.2f})",
@@ -2086,20 +2188,17 @@ def transactions_page(result) -> None:
     ])
 
     with tab_pay:
-        st.dataframe([t[1] for t in pay_txs], width="stretch", hide_index=True)
-        st.caption(f"共 {len(pay_txs)} 笔涉案转出流水，其中吻合指控起诉事实主张候选共 {len(candidate_ids)} 笔。")
+        st.dataframe([t[1] for t in pay_txs_filtered], width="stretch", hide_index=True)
+        st.caption(f"筛选命中 {len(pay_txs_filtered)} / 共 {len(pay_txs)} 笔涉案转出流水，其中吻合指控起诉事实主张候选共 {len(candidate_ids)} 笔。")
 
     with tab_refund:
         st.info(f"【待核验转回流水】按账户关系识别到 {len(refund_txs)} 笔、¥{sum_refund:,.2f} 元可能转入被害人账户；流水摘要不能单独证明返还性质或法定冲减效果。")
-        st.dataframe([t[1] for t in refund_txs], width="stretch", hide_index=True)
+        st.dataframe([t[1] for t in refund_txs_filtered], width="stretch", hide_index=True)
+        st.caption(f"筛选命中 {len(refund_txs_filtered)} / 共 {len(refund_txs)} 笔。")
 
     with tab_all:
-        query = st.text_input("快速检索姓名、账号末位或流水号", placeholder="例如：朱某、何某、林某、A005、0022025000009")
-        filtered_rows = all_rows
-        if query:
-            filtered_rows = [r for r in all_rows if query.lower() in " ".join(str(v).lower() for v in r.values())]
-        st.dataframe(filtered_rows, width="stretch", hide_index=True)
-        st.caption(f"全案总计导入 {len(result.transactions)} 笔原始银行记录；当前筛选显示 {len(filtered_rows)} 笔。前两类台账按 canonical 唯一事件展示。")
+        st.dataframe([t[1] for t in all_rows_filtered], width="stretch", hide_index=True)
+        st.caption(f"筛选命中 {len(all_rows_filtered)} / 共 {len(all_rows)} 笔。全案总计导入 {len(result.transactions)} 笔原始银行记录；前两类台账按 canonical 唯一事件展示。")
 
     with tab_graph:
         render_section_heading("03 / TOPOLOGY", "核心涉案资金流向图", f"从 {len(result.transactions)} 笔原始流水提取主要证据路径：{len(topo.nodes)} 个账户节点、{len(topo.edges)} 条唯一交易事件")
@@ -2229,14 +2328,57 @@ def review_page(result) -> None:
             unsafe_allow_html=True,
         )
     if result.duplicate_groups:
-        groups = [" / ".join(ids) for ids in result.duplicate_groups.values()]
+        groups = list(result.duplicate_groups.values())
         st.markdown(
             f'<div class="accessible-notice danger"><span class="notice-icon">!</span> '
             f'<strong>重复记账/镜像流水预警：</strong>发现 {len(groups)} 组疑似重复记账或镜像流水，请优先核实排除。</div>',
             unsafe_allow_html=True,
         )
-        with st.expander("查看重复/镜像流水组", expanded=False):
-            st.dataframe([{"重复组": index, "流水编号": value} for index, value in enumerate(groups, 1)], width="stretch", hide_index=True)
+        # 每笔流水可能被哪些主张召回为候选
+        claim_list = result.claims if result.claims else [result.claim]
+        candidate_claims: dict[str, list[str]] = {}
+        for c in claim_list:
+            for cand in result.candidates_by_claim.get(c.id, []):
+                candidate_claims.setdefault(cand.transaction_id, []).append(c.id)
+        with st.expander("查看重复/镜像流水组 · 影响点与处置指引", expanded=True):
+            st.info(
+                "【通俗说明】以下各组是同一笔资金在不同账户账单中各记一次的镜像记录（例如同一转账同时出现在付款方与收款方两份账单里）。"
+                "核验时同一组只应把其中一笔采信纳入主张覆盖金额，其余流水请标记为“重复记账/镜像流水”予以排除；"
+                "否则覆盖金额会被重复计算。决策引擎已把重复组作为风险码（DUPLICATE_TRANSACTION）自动阻断重复计入，"
+                "此处供人工复核确认。"
+            )
+            summary_rows = []
+            detail_rows = []
+            for group_index, tx_ids in enumerate(groups, 1):
+                group_txs = [result.transactions[tid] for tid in tx_ids if tid in result.transactions]
+                if not group_txs:
+                    continue
+                first = group_txs[0]
+                amounts = {t.amount for t in group_txs}
+                dates = {str(t.date) for t in group_txs}
+                summary_rows.append({
+                    "重复组": f"第 {group_index} 组",
+                    "金额": f"¥{first.amount:,.2f}" if len(amounts) == 1 else " / ".join(f"¥{a:,.2f}" for a in sorted(amounts)),
+                    "日期": " / ".join(sorted(dates)),
+                    "付款方": f"{first.payer_name} ({first.payer_account_id or '-'})",
+                    "收款方": f"{first.payee_name} ({first.payee_account_id or '-'})",
+                    "组内流水数": len(group_txs),
+                })
+                for tx in group_txs:
+                    claims_hit = candidate_claims.get(tx.id, [])
+                    claim_tags = "、".join(claims_hit) if claims_hit else "—"
+                    detail_rows.append({
+                        "重复组": f"第 {group_index} 组",
+                        "交易流水号": tx.transaction_id,
+                        "候选归属主张": claim_tags,
+                        "是否当前主张候选": "是" if tx.id in {c.transaction_id for c in candidates} else "否",
+                        "原始证据定位": _source_locator_label(tx),
+                    })
+            st.markdown('<div class="section-kicker">重复组总览</div>', unsafe_allow_html=True)
+            st.dataframe(summary_rows, width="stretch", hide_index=True)
+            st.markdown('<div class="section-kicker">组内逐笔定位</div>', unsafe_allow_html=True)
+            st.dataframe(detail_rows, width="stretch", hide_index=True)
+            st.caption("处置建议：同一组内仅保留一笔作为采信流水，其余在【03 资金证据核验】候选审查表中标记为“重复记账/镜像流水”排除。")
 
     supplementary_documents = _supplementary_documents(result)
     conflict_matrix = _conflict_matrix_for(result, supplementary_documents)
@@ -2718,7 +2860,128 @@ PAGES = [
     "03  资金证据核验",
     "04  审查底稿留痕",
 ]
-page_selection = st.sidebar.radio("工作区导航", PAGES, label_visibility="collapsed")
+
+# 侧边栏案件操作与导航分区：新建案件不再与历史案件切换共用一个按钮。
+sidebar_result = st.session_state.get("result")
+case_display_names = _load_case_display_names()
+sidebar_notice = st.session_state.pop("sidebar_notice", None)
+if sidebar_notice:
+    st.sidebar.success(sidebar_notice)
+st.sidebar.markdown('<div class="section-kicker" style="margin-top:8px;">当前案件</div>', unsafe_allow_html=True)
+if sidebar_result is None:
+    st.sidebar.markdown('<span class="accessible-status status-insufficient"><span class="status-symbol">—</span> 尚未加载案件</span>', unsafe_allow_html=True)
+else:
+    signed = "decision" in st.session_state
+    status_cls = "status-ok" if signed else "status-pending"
+    status_sym = "✓" if signed else "◌"
+    status_txt = "复核已签署完成" if signed else "等待人工复核"
+    st.sidebar.markdown(
+        f'<span class="accessible-status {status_cls}"><span class="status-symbol">{status_sym}</span> {status_txt}</span>',
+        unsafe_allow_html=True,
+    )
+    active_case_id = sidebar_result.claim.case_id
+    active_display = case_display_names.get(active_case_id)
+    st.sidebar.caption(f"案件：{active_display}（{active_case_id}）" if active_display else f"案件编号：{active_case_id}")
+    with st.sidebar.popover("重命名当前案件", use_container_width=True):
+        new_name = st.text_input(
+            "案件显示名（仅展示用途，案件编号不变）",
+            value=case_display_names.get(active_case_id, ""),
+            key="sidebar_rename_input",
+        )
+        if st.button("保存显示名", key="sidebar_rename_save", type="primary"):
+            with closing(connect(ROOT / "data" / "cases.db")) as connection:
+                Repository(connection).save_case_display_name(
+                    active_case_id, new_name.strip() or active_case_id
+                )
+            st.rerun()
+st.sidebar.markdown('<div class="section-kicker sidebar-operation-heading">案件操作</div>', unsafe_allow_html=True)
+if st.sidebar.button("新建案件", use_container_width=True, key="sidebar_new_case"):
+    # New means a clean workbench, not merely jumping to the old materials
+    # panel. Persisted SQLite checkpoints remain untouched until the user
+    # explicitly deletes a history entry below.
+    for state_key in (
+        "result", "decision", "report", "repository_path", "supplementary_documents",
+        "failed_audit_events", "materials_panel_expanded",
+    ):
+        st.session_state.pop(state_key, None)
+    st.session_state["nav_page"] = PAGES[0]
+    st.session_state["materials_panel_expanded"] = True
+    st.session_state["material_source"] = "上传材料"
+    st.query_params.pop("case_id", None)
+    st.session_state["sidebar_notice"] = "已进入新建案件工作区；历史案件记录未删除。"
+    st.rerun()
+
+# 历史案件：加载与删除放在同一分区，避免把“新建”和“切换”误解为同一个动作。
+_history_db = ROOT / "data" / "cases.db"
+if _history_db.exists():
+    with closing(connect(_history_db)) as connection:
+        history_cases = Repository(connection).list_cases()
+else:
+    history_cases = []
+if history_cases:
+    st.sidebar.markdown('<div class="section-kicker sidebar-operation-heading">历史案件</div>', unsafe_allow_html=True)
+    switch_options = {
+        (
+            f"{case_display_names[c['case_id']]}（{c['case_id']}）"
+            if case_display_names.get(c['case_id'])
+            else f"{c['case_id']}（主张 {c['claim_count']} · 流水 {c['tx_count']}）"
+        ): c["case_id"]
+        for c in history_cases
+    }
+    selected_label = st.sidebar.selectbox("选择要打开的案件", list(switch_options.keys()), key="sidebar_history_case")
+    if st.sidebar.button("打开历史案件", use_container_width=True, key="sidebar_load_case"):
+        target_case_id = switch_options[selected_label]
+        if _restore_case_into_session(_history_db, target_case_id):
+            st.session_state["nav_page"] = PAGES[0]
+            st.query_params["case_id"] = target_case_id
+            st.session_state["sidebar_notice"] = f"已打开历史案件：{selected_label}"
+            st.rerun()
+        else:
+            st.sidebar.error("该案件未读取到有效主张或流水数据。")
+
+    with st.sidebar.popover("删除历史案件", use_container_width=True):
+        delete_label = st.selectbox("选择要删除的案件", list(switch_options.keys()), key="sidebar_delete_case")
+        st.warning("删除只会移除本机 SQLite 中的脱敏案件快照、复核记录和审计记录，不会删除原始 Word/Excel 文件。")
+        confirm_delete = st.checkbox("我确认永久删除所选历史案件", key="sidebar_delete_confirm")
+        if st.button("确认删除", type="secondary", use_container_width=True, key="sidebar_delete_submit"):
+            if not confirm_delete:
+                st.error("请先勾选确认框。")
+            else:
+                target_case_id = switch_options[delete_label]
+                with closing(connect(_history_db)) as connection:
+                    Repository(connection).delete_case(target_case_id)
+                if st.session_state.get("result") is not None and st.session_state.result.claim.case_id == target_case_id:
+                    for state_key in (
+                        "result", "decision", "report", "repository_path", "supplementary_documents",
+                        "failed_audit_events", "materials_panel_expanded",
+                    ):
+                        st.session_state.pop(state_key, None)
+                    st.session_state["nav_page"] = PAGES[0]
+                    st.query_params.pop("case_id", None)
+                st.session_state["sidebar_notice"] = f"已删除历史案件：{delete_label}"
+                st.rerun()
+else:
+    st.sidebar.caption("暂无已保存的历史案件。")
+
+st.sidebar.markdown('<div class="section-kicker sidebar-operation-heading">工作区导航</div>', unsafe_allow_html=True)
+# Use explicit buttons rather than a visually collapsed radio control. Each
+# button writes the target page before rerunning, so a click has an immediate,
+# inspectable destination even when the current page contains a large editor.
+if st.session_state.get("nav_page") not in PAGES:
+    st.session_state["nav_page"] = PAGES[0]
+page_selection = st.session_state["nav_page"]
+for nav_index, nav_label in enumerate(PAGES, 1):
+    nav_text = f"▌  {nav_label}" if page_selection == nav_label else nav_label
+    if st.sidebar.button(
+        nav_text,
+        key=f"sidebar_nav_{nav_index}",
+        use_container_width=True,
+        type="secondary",
+    ):
+        st.session_state["nav_page"] = nav_label
+        st.rerun()
+    if page_selection == nav_label:
+        st.sidebar.caption(f"当前定位：{nav_label}")
 st.sidebar.divider()
 
 result = st.session_state.get("result")

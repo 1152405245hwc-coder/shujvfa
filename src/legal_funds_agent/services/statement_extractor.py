@@ -163,17 +163,33 @@ def extract_statement_payment(
         return None
 
 
+# Two heading conventions occur in real materials: the narrative form
+# "被害人刘某陈述" and the transcript (笔录) form "被害人：刘某". The transcript
+# form is what an actual 被害人陈述笔录 carries, so it has to be recognised or
+# multi-victim cases silently collapse into a single unattributed statement.
 _VICTIM_HEADING = re.compile(r"被害人(?P<name>[一-鿿]{1,4})陈述")
+_VICTIM_LABEL = re.compile(r"被害人[:：]\s*(?P<name>[一-鿿]{1,4})")
+
+
+def _victim_heading_matches(text: str):
+    """Heading matches for whichever convention the document actually uses.
+
+    The narrative form wins when present so existing materials keep their
+    current sectioning; the transcript form is only used as a fallback.
+    """
+    matches = list(_VICTIM_HEADING.finditer(text))
+    return matches or list(_VICTIM_LABEL.finditer(text))
 
 
 def split_victim_statements(text: str) -> dict[str, str]:
     """Split a combined statement document into per-victim sections.
 
-    Sections are delimited by "被害人X陈述" headings. Returns an empty dict when
-    the text carries no such heading — the caller then treats the whole text as
-    a single statement (the historical single-victim behaviour).
+    Sections are delimited by "被害人X陈述" headings, or by "被害人：X" lines in
+    material using the 笔录 (transcript) layout. Returns an empty dict when the
+    text carries neither — the caller then treats the whole text as a single
+    statement (the historical single-victim behaviour).
     """
-    matches = list(_VICTIM_HEADING.finditer(text))
+    matches = _victim_heading_matches(text)
     sections: dict[str, str] = {}
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)

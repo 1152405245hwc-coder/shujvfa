@@ -1,0 +1,22 @@
+{
+  "expected_proposals": [
+    {
+      "canonical_name": "马某",
+      "alias": "马会计",
+      "should_require_human_confirmation": true,
+      "supporting_materials": [
+        "03_刘某陈述.docx",
+        "05_郑某陈述.docx",
+        "07_被告人供述与辩解.docx",
+        "08_聊天记录摘录.docx"
+      ]
+    }
+  ],
+  "must_not_merge": [
+    {
+      "name_a": "马师傅",
+      "name_b": "马某",
+      "reason": "马师傅为运输人员马某甲，证言明确不是收款账户持有人。"
+    }
+  ]
+}

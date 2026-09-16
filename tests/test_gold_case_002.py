@@ -65,8 +65,8 @@ class GoldCase002Test(unittest.TestCase):
     def setUpClass(cls):
         visible = GOLD_PKG / "visible"
         cls.indictment_text = extract_document_text(
-            (visible / "documents" / "01_indictment.docx").read_bytes(),
-            filename="01_indictment.docx",
+            (visible / "documents" / "01_起诉书.docx").read_bytes(),
+            filename="01_起诉书.docx",
         )
         # 多被害人案件：三份陈述合并为一个文本进入主链，与 UI 多文件上传后的
         # 拼接行为一致；各被害人段落由 "被害人X陈述" 标题切分。
@@ -75,14 +75,14 @@ class GoldCase002Test(unittest.TestCase):
                 (visible / "documents" / name).read_bytes(), filename=name,
             )
             for name in (
-                "03_victim_liu_statement.docx",
-                "04_victim_zhou_statement.docx",
-                "05_victim_zheng_statement.docx",
+                "03_刘某陈述.docx",
+                "04_周某陈述.docx",
+                "05_郑某陈述.docx",
             )
         )
         csv_text, skip_stats = extract_transactions_csv_detailed(
-            (visible / "bank" / "02_bank_statements.xlsx").read_bytes(),
-            filename="02_bank_statements.xlsx",
+            (visible / "bank" / "02_银行流水账单.xlsx").read_bytes(),
+            filename="02_银行流水账单.xlsx",
         )
         cls.csv_skip_stats = skip_stats
         cls.csv_text = csv_text

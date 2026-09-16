@@ -1,0 +1,38 @@
+{
+  "case_id": "GOLD_CASE_002",
+  "title": "陈某涉嫌诈骗案——“星岚储能一期项目”资金证据审查测试案",
+  "visible_files": [
+    "visible/documents/01_indictment.docx",
+    "visible/bank/02_bank_statements.xlsx",
+    "visible/documents/03_victim_liu_statement.docx",
+    "visible/documents/04_victim_zhou_statement.docx",
+    "visible/documents/05_victim_zheng_statement.docx",
+    "visible/documents/06_witness_statements.docx",
+    "visible/documents/07_defendant_statements.docx",
+    "visible/documents/08_chat_records.docx",
+    "visible/documents/09_project_materials.docx"
+  ],
+  "hidden_files": [
+    "hidden/alias_truth.json",
+    "hidden/claim_truth.json",
+    "hidden/conflict_truth.json",
+    "hidden/cross_claim_truth.json",
+    "hidden/evaluation_notes.md",
+    "hidden/question_bank.json",
+    "hidden/refund_truth.json",
+    "hidden/transaction_truth.json"
+  ],
+  "claimed_total": "7000000.00",
+  "raw_bank_rows_by_sheet": {
+    "A101": 38,
+    "A102": 32,
+    "A105": 31,
+    "B201": 31,
+    "B202": 26,
+    "B203": 26,
+    "B204": 24
+  },
+  "raw_bank_rows_total": 208,
+  "canonical_key_events": 32,
+  "filename_encoding_note": "All archive path/file names are ASCII for Windows ZIP compatibility; document contents remain Chinese UTF-8/Office Open XML."
+}

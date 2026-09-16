@@ -1,12 +1,25 @@
-GOLD_CASE_002 文件名对照表
-说明：压缩包内全部文件名使用 ASCII/英文，以避免 Windows 解压乱码；文档正文仍为中文。
+GOLD_CASE_002 文件清单与材料名称对照表
 
-visible/documents/01_indictment.docx  ->  01 起诉书
-visible/bank/02_bank_statements.xlsx  ->  02 银行流水账单
-visible/documents/03_victim_liu_statement.docx  ->  03 刘某陈述
-visible/documents/04_victim_zhou_statement.docx  ->  04 周某陈述
-visible/documents/05_victim_zheng_statement.docx  ->  05 郑某陈述
-visible/documents/06_witness_statements.docx  ->  06 证人证言
-visible/documents/07_defendant_statements.docx  ->  07 被告人供述与辩解
-visible/documents/08_chat_records.docx  ->  08 聊天记录摘录
-visible/documents/09_project_materials.docx  ->  09 项目资料
+说明：本案例包文件名已统一为中文法律文书命名（与 GOLD_CASE_001 一致），
+由原 ASCII 文件名（01_indictment 等）更名而来；文档正文仍为中文，内容未改动。
+
+visible/documents/01_起诉书.docx          ->  01 起诉书
+visible/bank/02_银行流水账单.xlsx         ->  02 银行流水账单
+visible/documents/03_刘某陈述.docx        ->  03 被害人刘某陈述
+visible/documents/04_周某陈述.docx        ->  04 被害人周某陈述
+visible/documents/05_郑某陈述.docx        ->  05 被害人郑某陈述
+visible/documents/06_证人证言.docx        ->  06 证人证言
+visible/documents/07_被告人供述与辩解.docx ->  07 被告人供述与辩解
+visible/documents/08_聊天记录摘录.docx    ->  08 聊天记录摘录
+visible/documents/09_项目资料.docx        ->  09 项目资料
+
+原 ASCII 文件名对应关系（存档）：
+01_indictment.docx            -> 01_起诉书.docx
+02_bank_statements.xlsx       -> 02_银行流水账单.xlsx
+03_victim_liu_statement.docx  -> 03_刘某陈述.docx
+04_victim_zhou_statement.docx -> 04_周某陈述.docx
+05_victim_zheng_statement.docx-> 05_郑某陈述.docx
+06_witness_statements.docx    -> 06_证人证言.docx
+07_defendant_statements.docx  -> 07_被告人供述与辩解.docx
+08_chat_records.docx          -> 08_聊天记录摘录.docx
+09_project_materials.docx     -> 09_项目资料.docx
