@@ -13,3 +13,15 @@ output/*
 *.egg-info/
 .streamlit_*.log
 streamlit*.log
+
+# Case-package build scratch (_work 仅保留可复现生成脚本)
+sample_data/case_packages/_work/trash/
+sample_data/case_packages/_work/build*/
+sample_data/case_packages/_work/obsolete/
+sample_data/case_packages/_work/prev_v2/
+sample_data/case_packages/_work/pdf/
+sample_data/case_packages/_work/pdf_g2_full/
+sample_data/case_packages/_work/backup/
+sample_data/case_packages/_work/check_*
+sample_data/case_packages/_work/*.pdf
+sample_data/case_packages/_work/*.png

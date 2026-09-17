@@ -28,7 +28,7 @@ $env:PYTHONPATH='src'
 ```
 
 个人启动和自测也可以直接执行根目录脚本：[START_HERE.md](START_HERE.md)、`start_ui.ps1`、`run_checks.ps1`。
-正式支持 DOCX、XLSX/XLSM、CSV；TXT 和文本型 PDF 作为辅助输入。扫描型 PDF、图片和 OCR 属于实验性能力，缺少可选依赖时会明确提示，不影响正式主链。
+新机器首次使用：直接双击根目录 **`启动资金链证审.bat`**，它会自动检查 Python（>=3.11）、创建虚拟环境、安装依赖（工程实现上优先 `uv sync`、无 `uv` 时回退 pip，均已锁定 `uv.lock`），随后启动 Streamlit；第二次起双击同一脚本直接启动。正式支持 DOCX、XLSX/XLSM、CSV；TXT 和文本型 PDF 作为辅助输入。扫描型 PDF、图片和 OCR 属于实验性能力，缺少可选依赖时会明确提示，不影响正式主链。
 
 正式测试命令为：
 
