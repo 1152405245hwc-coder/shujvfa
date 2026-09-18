@@ -59,7 +59,6 @@ from legal_funds_agent.workflow.vertical_slice import (
 st.set_page_config(page_title="资金链证审", page_icon=None, layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap');
 :root {
     --paper: #f8fafc;
     --surface: #ffffff;
@@ -92,7 +91,7 @@ html {
     color: var(--ink);
 }
 html, body, [class*="css"] {
-    font-family: "Atkinson Hyperlegible", Inter, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: Inter, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -256,7 +255,7 @@ section.main > div {
     background: var(--surface);
 }
 .case-masthead h1 {
-    font-size: 35px;
+    font-size: 46px;
     line-height: 1.15;
     margin: 16px 0 6px;
     color: var(--ink);
@@ -1451,7 +1450,7 @@ def render_case_masthead(
             if case_type == "诈骗案件":
                 case_type = "诈骗罪"
         elif case_id in {"CASE-0001", "DEMO_CASE_001", "D01"}:
-            title = "何某等涉嫌诈骗案 (D01 演示案)"
+            title = "何某等涉嫌诈骗案（演示案例）"
             sub = "资金证据核验"
         else:
             title = f"{case_id} 涉嫌经济犯罪案"
@@ -1869,10 +1868,10 @@ def _landing_page() -> None:
     st.markdown(
         '<header class="case-masthead">'
         '<div class="masthead-top">'
-        '<span class="masthead-case-code">资金证据审查系统</span>'
+        '<span class="masthead-case-code">资金链证审</span>'
         '<span class="masthead-status-badge">尚未加载案件</span>'
         '</div>'
-        '<h1>资金链证审</h1>'
+        '<h1>资金证据审查系统</h1>'
         '<p class="masthead-subtitle">资金证据审查工作台</p>'
         '<div class="masthead-meta">'
         '<span>起诉书 · 被害人陈述 · 银行流水交叉核验</span>'
@@ -1939,13 +1938,13 @@ def _landing_page() -> None:
     with col_demo:
         with st.container(border=True):
             st.markdown("**打开演示案件**")
-            st.caption("D01 为完全虚构的快速演示；GOLD_CASE_001 为 736.8 万实战评测卷宗。")
-            if st.button("D01 演示案件", key="landing_demo_d01", use_container_width=True):
-                st.session_state["material_source"] = "演示案件(D01)"
+            st.caption("演示案例为完全虚构的快速演示；实战评测案例为 736.8 万评测卷宗。")
+            if st.button("打开演示案例", key="landing_demo_d01", use_container_width=True):
+                st.session_state["material_source"] = "演示案例"
                 st.session_state["landing_panel"] = True
                 st.rerun()
-            if st.button("GOLD_CASE_001 实战评测", key="landing_demo_gold", use_container_width=True):
-                st.session_state["material_source"] = "实战评测(GOLD_CASE_001 · 736.8万)"
+            if st.button("实战评测案例（736.8万）", key="landing_demo_gold", use_container_width=True):
+                st.session_state["material_source"] = "实战评测案例（736.8万）"
                 st.session_state["landing_panel"] = True
                 st.rerun()
     with col_history:
@@ -1970,7 +1969,7 @@ def case_page() -> None:
         _landing_page()
         return
     active_case_id = current_result.claim.case_id
-    data_label = "实战评测 GOLD_CASE_001" if active_case_id == "GOLD_CASE_001" else "演示案件"
+    data_label = "实战评测案例" if active_case_id == "GOLD_CASE_001" else "演示案件"
     update_label = "已恢复本机签署快照" if st.session_state.get("decision") else "等待新操作"
     render_case_masthead(active_case_id, status=update_label, data_classification=data_label)
     _case_overview()
@@ -1986,16 +1985,16 @@ def _materials_panel(active_case_id: str) -> None:
         st.info(f"案件编号 {active_case_id} 已存在历史案件记录，已为您分配新案件编号 {suggested_case_id}。")
     case_id = st.text_input("案件编号", value=suggested_case_id)
     persist_locally = st.checkbox("保存脱敏后的本地案件记录", value=False, help="默认不保存上传材料；启用后仅写入本机 SQLite。")
-    source_default = "实战评测(GOLD_CASE_001 · 736.8万)" if active_case_id == "GOLD_CASE_001" else "演示案件(D01)"
+    source_default = "实战评测案例（736.8万）" if active_case_id == "GOLD_CASE_001" else "演示案例"
     if active_case_id not in {"CASE-0001"} and active_case_id != "GOLD_CASE_001":
         source_default = "打开历史案件"
-    source_options = ["演示案件(D01)", "实战评测(GOLD_CASE_001 · 736.8万)", "上传材料", "打开历史案件"]
+    source_options = ["演示案例", "实战评测案例（736.8万）", "上传材料", "打开历史案件"]
     if "material_source" in st.session_state:
         source = st.segmented_control("材料来源", source_options, key="material_source")
     else:
         source = st.segmented_control("材料来源", source_options, default=source_default, key="material_source")
-    if source == "演示案件(D01)":
-        st.caption("使用完全虚构的 D01 案例：指控50,000元，流水对应30,000元。")
+    if source == "演示案例":
+        st.caption("使用完全虚构的演示案例：指控50,000元，流水对应30,000元。")
         run_clicked = st.button("运行演示审查", type="primary", width="content")
         if run_clicked:
             st.query_params.pop("case_id", None)
@@ -2016,7 +2015,7 @@ def _materials_panel(active_case_id: str) -> None:
             except Exception as exc:
                 st.session_state.failed_audit_events = getattr(exc, "audit_events", [])
                 st.error(f"审查工作流失败：{exc}")
-    elif source == "实战评测(GOLD_CASE_001 · 736.8万)":
+    elif source == "实战评测案例（736.8万）":
         st.caption("载入高难度评测案卷：涉案总额 7,368,000 元，直接读取原始 Excel 多账户流水（招行/工行/证券）及第三方代收（林某 A005）。")
         col_g1, col_g2 = st.columns([1, 3])
         with col_g1:
@@ -2026,7 +2025,7 @@ def _materials_panel(active_case_id: str) -> None:
         if run_gold:
             st.query_params.pop("case_id", None)
             try:
-                with st.status("正在加载 GOLD_CASE_001 卷宗并执行穿透核验...", expanded=True) as status:
+                with st.status("正在加载实战评测卷宗并执行穿透核验...", expanded=True) as status:
                     pkg = ROOT / "sample_data" / "case_packages" / "GOLD_CASE_001"
                     indictment_bytes = (pkg / "visible" / "documents" / "01_起诉书.docx").read_bytes()
                     statement_bytes = (pkg / "visible" / "documents" / "05_被害人陈述.docx").read_bytes()
@@ -2071,14 +2070,14 @@ def _materials_panel(active_case_id: str) -> None:
                         allow_missing_statement=True,
                         transaction_evidence_id="EVI-BANK-XLSX",
                     )
-                    status.update(label=f"GOLD_CASE_001 审查完成：召回 {len(result.candidates)}/{len(result.transactions)} 笔流水，总额 ¥{result.claim.claimed_amount:,.2f}", state="complete")
+                    status.update(label=f"实战评测案例审查完成：召回 {len(result.candidates)}/{len(result.transactions)} 笔流水，总额 ¥{result.claim.claimed_amount:,.2f}", state="complete")
                 st.session_state.result = result
                 st.session_state.supplementary_documents = supplementary_records
                 st.session_state.repository_path = _persist_result(result) if persist_locally else None
                 st.session_state.pop("decision", None)
                 st.session_state.pop("report", None)
                 st.session_state.pop("failed_audit_events", None)
-                st.success("GOLD_CASE_001 实战案卷加载完毕！请前往【证据与资金流水】或【资金证据核验】完成全案复核。")
+                st.success("实战评测案卷加载完毕！请前往【证据与资金流水】或【资金证据核验】完成全案复核。")
             except Exception as exc:
                 st.session_state.failed_audit_events = getattr(exc, "audit_events", [])
                 st.error(f"实战案卷处理失败：{exc}")
@@ -2196,7 +2195,7 @@ def _materials_panel(active_case_id: str) -> None:
         data_dir = ROOT / "data"
         db_path = data_dir / "cases.db"
         if not db_path.exists():
-            st.info("本地数据库暂无保存的历史案件。请先通过“演示案件”或“上传材料”创建，并勾选“保存脱敏后的本地案件记录”。")
+            st.info("本地数据库暂无保存的历史案件。请先通过“演示案例”或“上传材料”创建，并勾选“保存脱敏后的本地案件记录”。")
         else:
             with closing(connect(db_path)) as connection:
                 repo = Repository(connection)
@@ -2881,6 +2880,7 @@ def evidence_graph_page(result) -> None:
     render_case_masthead(result.claim.case_id, status=status_label, data_classification=data_label, review_stage="案件关系图")
 
     from legal_funds_agent.services.evidence_graph_service import (
+        build_core_view,
         build_evidence_graph,
         evidence_graph_to_payload,
     )
@@ -2894,16 +2894,39 @@ def evidence_graph_page(result) -> None:
         alias_registry=getattr(result, "alias_registry", None),
     )
     stats = graph.stats()
-    render_section_heading("01 / 关系图", "案件关系图", f"{stats.get('nodes', 0)} 个节点 · {stats.get('edges', 0)} 条关系")
-    st.caption(
-        "本图回答“人—账户—主张—材料怎么关联”；“钱怎么走”请看【02 涉案资金流水】页的资金流向图。"
-        "金色虚线为待证/争议关系（如第三方代收、材料提及），一律不构成确定事实；所有节点与关系均可回溯到原始流水行、主张定位或材料文件。"
-    )
     if not graph.nodes:
         st.info("当前案件暂无可建图的人物、账户、主张或证据材料。")
         return
 
-    payload = evidence_graph_to_payload(graph)
+    core_graph = build_core_view(
+        graph,
+        relevant_tx_ids={c.transaction_id for c in (result.candidates or [])} or None,
+    )
+    core_stats = core_graph.stats()
+    render_section_heading(
+        "01 / 关系图",
+        "案件关系图",
+        f"核心视图 {core_stats.get('nodes', 0)} 个节点 · {core_stats.get('edges', 0)} 条关系"
+        f"（完整关联 {stats.get('nodes', 0)} 节点 · {stats.get('edges', 0)} 条）",
+    )
+    st.caption(
+        "核心视图只保留办案关键要素：被害人、嫌疑人、第三方收款人、起诉书载明账户、付款主张，"
+        "以及与指控候选流水相关的资金往来，让办案人员一眼看清案件骨架；与指控无关的流水、证据材料提及、"
+        "别名记录等细节默认收起，可用下方开关展开完整关联。"
+        "金色虚线为待证/争议关系（如第三方代收），一律不构成确定事实；所有节点与关系均可回溯到原始流水行、主张定位或材料文件。"
+        "“钱怎么走”请看【02 涉案资金流水】页的资金流向图。"
+    )
+    show_full = st.toggle(
+        "展开完整关联（含证据材料提及、别名记录等辅助细节）",
+        value=False,
+        key="evidence_graph_show_full",
+    )
+    active_graph = graph if show_full else core_graph
+    if not active_graph.nodes:
+        st.info("核心视图暂无可展示内容，可展开完整关联查看。")
+        return
+
+    payload = evidence_graph_to_payload(active_graph)
     sel_state_key = "evidence_graph_main__selection_echo"
     last_selection = st.session_state.get(sel_state_key)
     if last_selection:
@@ -3175,7 +3198,7 @@ if st.session_state.get("result") is None:
 st.sidebar.markdown("""
 <div class="sidebar-brand-block">
   <div><span class="sidebar-brand-badge"></span><span class="sidebar-brand-name">资金链证审</span></div>
-  <div class="sidebar-brand-sub">资金证据审查 · V0.3</div>
+  <div class="sidebar-brand-sub">资金证据审查系统</div>
 </div>
 """, unsafe_allow_html=True)
 

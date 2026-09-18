@@ -2,14 +2,17 @@
 
 开始前请先阅读 [PROJECT_MUST_READ.md](PROJECT_MUST_READ.md)，尤其是 DeepSeek 与确定性金额核验的职责边界。
 
-### 方式一：直接双击启动（最推荐）
+> **比赛评审不适用本文**：评审请以仓库根目录 `Dockerfile` 单容器运行，见 [README_SUBMISSION.md](README_SUBMISSION.md)。
+> 本文仅面向开发者在个人 Windows 机器上本地调试，相关脚本已统一移至 `tools/local_windows/`。
 
-- 直接双击项目文件夹下的 **`启动资金链证审.bat`**（第一入口，首次运行自动完成环境准备）。
+### 方式一：直接双击启动（本地调试最推荐）
+
+- 双击 **`tools/local_windows/启动资金链证审.bat`**（第一入口，首次运行自动完成环境准备）。
 
 首次运行会自动检查 Python、创建虚拟环境并安装依赖（有 `uv` 时用 `uv sync`，否则自动回退 pip，普通用户无需关心），可能需要几分钟；第二次起双击会直接启动，跳过安装。脚本不含任何 API Key，默认本地 Mock。
 
-- 也可以双击桌面上的 **【资金链证审系统】** 快捷方式；
-- 或者双击项目文件夹下的 **`双击启动.bat`**（假定环境已初始化好的旧入口）。
+- 也可以双击桌面上的 **【资金链证审系统】** 快捷方式（由 `tools/local_windows/创建桌面快捷方式.bat` 生成）；
+- 或者双击 **`tools/local_windows/双击启动.bat`**（假定环境已初始化好的旧入口）。
 - 系统会自动拉起控制台并自动在浏览器中打开：<http://localhost:8501>。
 
 ### 方式二：命令行启动
@@ -17,7 +20,7 @@
 在 PowerShell 中进入项目目录后执行：
 
 ```powershell
-.\start_ui.ps1
+.\tools\local_windows\start_ui.ps1
 ```
 
 然后在浏览器打开 <http://localhost:8501>。默认选择“本地 Mock（推荐）”，不会联网或产生 API 费用。
@@ -41,7 +44,7 @@ XLSX 会尝试识别常见银行流水表头（交易时间、银行流水号、
 
 ```powershell
 $env:DEEPSEEK_API_KEY = "你的密钥"
-.\start_ui.ps1
+.\tools\local_windows\start_ui.ps1
 ```
 
 密钥不要写入文件或提交到 Git。

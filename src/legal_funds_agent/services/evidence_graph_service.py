@@ -119,6 +119,7 @@ def _mask(account: str | None) -> str:
 def _tx_ref(tx: Transaction) -> dict[str, Any]:
     return {
         "transaction_id": tx.transaction_id,
+        "tx_id": tx.id,
         "evidence_id": tx.source_evidence_id,
         "account_id": tx.source_account_id or "",
         "source_row": tx.source_row,
@@ -478,6 +479,80 @@ def build_evidence_graph(
                 )
 
     return graph
+
+
+# Core view: only what an investigator needs at a glance — the claims, the
+# parties named in the indictment, the accounts and counterparties touched by
+# claim-relevant transfers, and the holds / transfer / allegation edges among
+# them. Evidence-mention nodes and alias-record nodes are detail, not core;
+# the full view keeps them.
+
+
+def build_core_view(
+    graph: EvidenceGraph,
+    relevant_tx_ids: set[str] | None = None,
+) -> EvidenceGraph:
+    """Return the reduced core view of a full evidence graph.
+
+    Kept: claim nodes; the parties and accounts named in the indictment; and
+    transfer edges that match the case's candidate transactions
+    (``relevant_tx_ids`` — the deterministic claim-matching result), together
+    with the accounts and counterparties those transfers touch and their
+    holds edges. Transfer edges keep their ``disputed`` flag, so third-party
+    collection stays visible. Dropped: evidence-material nodes,
+    material-mention edges, alias-record nodes/edges and fund flows unrelated
+    to any claim. When ``relevant_tx_ids`` is None (matching not run yet),
+    all transfer edges are kept instead.
+    """
+
+    def _is_relevant(edge: EvidenceGraphEdge) -> bool:
+        if relevant_tx_ids is None:
+            return True
+        # Candidate matches carry the internal Transaction.id, while bank
+        # rows are referenced by Transaction.transaction_id — accept both.
+        return any(
+            str(ref.get("transaction_id", "")) in relevant_tx_ids
+            or str(ref.get("tx_id", "")) in relevant_tx_ids
+            for ref in edge.source_refs
+        )
+
+    claim_ids: set[str] = set()
+    for node in graph.nodes.values():
+        if node.node_type == "claim":
+            claim_ids.add(node.id)
+
+    keep: set[str] = set(claim_ids)
+    kept_transfer_endpoints: set[str] = set()
+    for edge in graph.edges:
+        if edge.edge_type == EDGE_ALLEGATION and edge.source in claim_ids:
+            keep.add(edge.target)
+        elif edge.edge_type == EDGE_TRANSFER and _is_relevant(edge):
+            # A relevant transfer pulls in both endpoints — including the
+            # third-party collector's account, which is exactly the risk an
+            # investigator must see. Unrelated flows stay out of the core view.
+            kept_transfer_endpoints.add(edge.source)
+            kept_transfer_endpoints.add(edge.target)
+    keep |= kept_transfer_endpoints
+
+    core = EvidenceGraph(case_id=graph.case_id)
+    for edge in graph.edges:
+        if edge.edge_type == EDGE_ALLEGATION and edge.source in keep and edge.target in keep:
+            core.edges.append(edge)
+        elif edge.edge_type == EDGE_TRANSFER and _is_relevant(edge) and edge.source in keep and edge.target in keep:
+            core.edges.append(edge)
+        elif (
+            edge.edge_type == EDGE_HOLDS_ACCOUNT
+            and edge.target in keep
+        ):
+            # 账户进入核心视图时带上其持有人，账户节点与持有人姓名互为印证。
+            core.edges.append(edge)
+    endpoint_ids = {e.source for e in core.edges} | {e.target for e in core.edges}
+    core.nodes = {
+        nid: graph.nodes[nid]
+        for nid in keep | endpoint_ids
+        if nid in graph.nodes
+    }
+    return core
 
 
 def evidence_graph_to_payload(graph: EvidenceGraph) -> dict[str, Any]:

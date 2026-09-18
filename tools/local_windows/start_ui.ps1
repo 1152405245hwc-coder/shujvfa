@@ -1,5 +1,8 @@
-﻿$ErrorActionPreference = "Stop"
-Set-Location $PSScriptRoot
+﻿param([switch]$NoPause)
+$ErrorActionPreference = "Stop"
+# 本脚本位于 tools/local_windows/，项目根目录为上两级
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+Set-Location $root
 
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -12,23 +15,29 @@ Write-Host "          资金链证审系统 (Legal Funds Agent)" -ForegroundColo
 Write-Host "========================================================" -ForegroundColor Cyan
 Write-Host ""
 
-$pythonExe = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+$pythonExe = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $pythonExe)) {
     Write-Host "[错误] 未找到 Python 虚拟环境: $pythonExe" -ForegroundColor Red
     Write-Host "请确认 .venv 文件夹是否已放置在项目根目录下。" -ForegroundColor Yellow
     Write-Host ""
-    Read-Host "按回车键退出"
+    if (-not $NoPause) { Read-Host "按回车键退出" }
     exit 1
 }
 
-# 自动清理 8501 端口可能残留的僵死进程，防止端口冲突或网址打不开
+# 清理残留的 Streamlit 进程（含孤儿进程），防止端口冲突或网址打不开
 try {
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -match 'streamlit' } |
+        ForEach-Object {
+            Write-Host "[系统清理] 正在停止残留的 Streamlit 进程 (PID: $($_.ProcessId))..." -ForegroundColor Yellow
+            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        }
     $occupied = Get-NetTCPConnection -LocalPort 8501 -State Listen -ErrorAction SilentlyContinue
     if ($occupied) {
         Write-Host "[系统清理] 正在释放被占用的 8501 端口 (PID: $($occupied.OwningProcess))..." -ForegroundColor Yellow
-        Stop-Process -Id $occupied.OwningProcess -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Milliseconds 800
+        $occupied | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
     }
+    Start-Sleep -Milliseconds 800
 } catch {}
 
 Write-Host "[1/2] 正在启动 Streamlit 高稳定性守护模式..." -ForegroundColor Green
@@ -71,5 +80,5 @@ Remove-Job $browserJob -ErrorAction SilentlyContinue
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Write-Host "[提示] 服务已停止。" -ForegroundColor Yellow
-    Read-Host "按回车键退出..."
+    if (-not $NoPause) { Read-Host "按回车键退出..." }
 }

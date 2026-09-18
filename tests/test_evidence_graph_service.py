@@ -18,6 +18,7 @@ from legal_funds_agent.services.evidence_graph_service import (
     PERSON_SUSPECT,
     PERSON_THIRD_PARTY,
     PERSON_VICTIM,
+    build_core_view,
     build_evidence_graph,
     evidence_graph_to_payload,
 )
@@ -169,6 +170,62 @@ class EvidenceGraphServiceTest(unittest.TestCase):
         payload = evidence_graph_to_payload(graph)
         self.assertEqual(payload["nodes"], [])
         self.assertEqual(payload["edges"], [])
+
+    def test_core_view_keeps_only_key_elements(self):
+        txs = {
+            "TX-1": make_tx("T001", "张某", "62220001", "李某", "62220002", "20000.00", row=2),
+            "TX-2": make_tx("T002", "张某", "62220001", "王某", "62229999", "10000.00", row=3),
+        }
+        documents = [{"filename": "03_证人证言.docx", "text": "证人证实李某甲与张某有资金往来。"}]
+        graph = build_evidence_graph(
+            [make_claim()], txs,
+            supplementary_documents=documents,
+            alias_registry=make_registry(),
+        )
+        core = build_core_view(graph)
+
+        # 核心视图更小，且只含核心边类型
+        self.assertLess(len(core.nodes), len(graph.nodes))
+        self.assertLess(len(core.edges), len(graph.edges))
+        self.assertTrue({e.edge_type for e in core.edges} <= {EDGE_HOLDS_ACCOUNT, EDGE_TRANSFER, EDGE_ALLEGATION})
+
+        # 无证据材料节点、别名记录节点
+        self.assertFalse([n for n in core.nodes.values() if n.node_type == "evidence"])
+        self.assertFalse([n for n in core.nodes.values() if n.role == "alias_name"])
+
+        # 被害人、嫌疑人、第三方收款人、主张、账户均在
+        roles = {n.name: n.role for n in core.nodes.values() if n.node_type == "person"}
+        self.assertEqual(roles.get("张某"), PERSON_VICTIM)
+        self.assertEqual(roles.get("李某"), PERSON_SUSPECT)
+        self.assertEqual(roles.get("王某"), PERSON_THIRD_PARTY)
+        self.assertTrue([n for n in core.nodes.values() if n.node_type == "claim"])
+        self.assertTrue([n for n in core.nodes.values() if n.node_type == "account"])
+
+        # 第三方代收在核心视图中仍为争议虚线
+        disputed = [e for e in core.edges if e.edge_type == EDGE_TRANSFER and e.disputed]
+        self.assertTrue(disputed)
+
+        # 核心视图节点/边仍全部可回溯
+        self.assertTrue(all(n.source_refs for n in core.nodes.values()))
+        self.assertTrue(all(e.source_refs for e in core.edges))
+
+    def test_core_view_filters_to_claim_relevant_transfers(self):
+        txs = {
+            "TX-1": make_tx("T001", "张某", "62220001", "李某", "62220002", "20000.00", row=2),
+            "TX-2": make_tx("T002", "张某", "62220001", "王某", "62229999", "10000.00", row=3),
+        }
+        graph = build_evidence_graph([make_claim()], txs)
+        core = build_core_view(graph, relevant_tx_ids={"T001"})
+        person_names = {n.name for n in core.nodes.values() if n.node_type == "person"}
+        self.assertIn("李某", person_names)
+        # 王某只出现在与指控无关的流水中，核心视图不保留
+        self.assertNotIn("王某", person_names)
+        transfers = [e for e in core.edges if e.edge_type == EDGE_TRANSFER]
+        self.assertEqual(len(transfers), 1)
+        self.assertEqual(transfers[0].amount, Decimal("20000.00"))
+        account_masks = {n.masked_account for n in core.nodes.values() if n.node_type == "account"}
+        self.assertTrue(any(mask.endswith("0002") for mask in account_masks))
+        self.assertFalse(any(mask.endswith("9999") for mask in account_masks))
 
     def test_payload_shape_and_serializable(self):
         import json

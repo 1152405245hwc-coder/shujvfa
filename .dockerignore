@@ -1,0 +1,27 @@
+# 版本控制与本地环境
+.git
+.venv
+.env
+__pycache__
+**/__pycache__
+*.pyc
+*.egg-info
+
+# 本地运行产物
+data
+output
+*.log
+.streamlit_*.log
+.pytest_cache
+.review_render
+.workbuddy-ai
+.agents
+
+# 本地 Windows 调试脚本 (不属于容器运行入口)
+tools/local_windows
+
+# 案例包构建中间产物 (仅保留可复现生成脚本在仓库中, 不进镜像)
+sample_data/case_packages/_work
+
+# 提交说明文档不需进入镜像
+README_SUBMISSION.md

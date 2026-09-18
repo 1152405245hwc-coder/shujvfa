@@ -27,8 +27,9 @@ $env:PYTHONPATH='src'
 .\.venv\Scripts\python.exe -m streamlit run ui\streamlit_app.py
 ```
 
-个人启动和自测也可以直接执行根目录脚本：[START_HERE.md](START_HERE.md)、`start_ui.ps1`、`run_checks.ps1`。
-新机器首次使用：直接双击根目录 **`启动资金链证审.bat`**，它会自动检查 Python（>=3.11）、创建虚拟环境、安装依赖（工程实现上优先 `uv sync`、无 `uv` 时回退 pip，均已锁定 `uv.lock`），随后启动 Streamlit；第二次起双击同一脚本直接启动。正式支持 DOCX、XLSX/XLSM、CSV；TXT 和文本型 PDF 作为辅助输入。扫描型 PDF、图片和 OCR 属于实验性能力，缺少可选依赖时会明确提示，不影响正式主链。
+个人启动和自测脚本已统一移至 `tools/local_windows/`（仅用于开发者本地 Windows 调试，不属于比赛运行入口）：[START_HERE.md](START_HERE.md)、`tools/local_windows/start_ui.ps1`、`run_checks.ps1`。
+**比赛评审请以单容器方式运行：`docker build -t legal-funds-agent . && docker run --rm -p 8501:8501 legal-funds-agent`，详见 [README_SUBMISSION.md](README_SUBMISSION.md)。**
+本地新机器首次使用：双击 `tools/local_windows/启动资金链证审.bat`，它会自动检查 Python（>=3.11）、创建虚拟环境、安装依赖（工程实现上优先 `uv sync`、无 `uv` 时回退 pip，均已锁定 `uv.lock`），随后启动 Streamlit；第二次起双击同一脚本直接启动。正式支持 DOCX、XLSX/XLSM、CSV；TXT 和文本型 PDF 作为辅助输入。扫描型 PDF、图片和 OCR 属于实验性能力，缺少可选依赖时会明确提示，不影响正式主链。
 
 正式测试命令为：
 
