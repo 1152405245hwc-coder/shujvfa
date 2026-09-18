@@ -110,25 +110,36 @@ def render_case_query_panel(result, *, supplementary_documents=None, claim_id=No
         saved = None
 
     request = None
-    col_a, col_b = st.columns(2)
+    # 默认只给与当前选中对象直接相关的三个上下文动作，避免在窄栏里铺满按钮。
     shortcuts = [
-        ("案件概况", "get_case_overview", {}, False),
         ("为什么标记为争议？", "get_claim_detail", {"claim_id": claim_id}, not claim_id),
         ("查看相关证据", "get_evidence_sources",
          {"transaction_id": transaction_id} if transaction_id else ({"entity": entity} if entity else ({"claim_id": claim_id} if claim_id else {})), False),
         ("这笔钱之后流向哪里？", "trace_fund_flow", {"transaction_id": transaction_id, "max_depth": 2}, not transaction_id),
-        ("还有哪些事项待核查？", "get_open_review_items", {}, False),
-        ("查看当前主张流水", "query_transactions", {"claim_id": claim_id} if claim_id else {}, False),
     ]
     for index, (label, tool, args, disabled) in enumerate(shortcuts):
-        with (col_a if index % 2 == 0 else col_b):
-            if st.button(label, key=f"{panel_key}_quick_{index}", disabled=disabled, use_container_width=True):
-                request = (label, tool, args)
-    if not transaction_id:
-        st.caption("在流水详情中选中一笔交易后，可查询其后续流向。")
+        hint = None
+        if tool == "get_claim_detail" and not claim_id:
+            hint = "需要先定位到具体主张。"
+        elif tool == "trace_fund_flow" and not transaction_id:
+            hint = "在流水详情中选中一笔交易后，可查询其后续流向。"
+        if st.button(label, key=f"{panel_key}_quick_{index}", disabled=disabled,
+                     use_container_width=True, help=hint):
+            request = (label, tool, args)
 
-    with st.expander("按条件查流水（离线可用）"):
+    with st.expander("更多查询"):
+        more_shortcuts = [
+            ("案件概况", "get_case_overview", {}, False),
+            ("还有哪些事项待核查？", "get_open_review_items", {}, False),
+            ("查看当前主张流水", "query_transactions", {"claim_id": claim_id} if claim_id else {}, False),
+        ]
+        for index, (label, tool, args, disabled) in enumerate(more_shortcuts):
+            if st.button(label, key=f"{panel_key}_more_{index}", disabled=disabled,
+                         use_container_width=True):
+                request = (label, tool, args)
+
         with st.form(f"{panel_key}_filters"):
+            st.caption("按条件查流水（离线可用）")
             payer = st.text_input("付款人（精确名称）", max_chars=100)
             payee = st.text_input("收款人（精确名称）", max_chars=100)
             start = st.text_input("起始日期", placeholder="2025-04-01", max_chars=10)
@@ -144,10 +155,10 @@ def render_case_query_panel(result, *, supplementary_documents=None, claim_id=No
                 args.update({"limit": 50, "offset": int(offset)})
                 request = ("流水条件查询", "query_transactions", args)
 
-    with st.form(f"{panel_key}_question"):
-        question = st.text_input("询问当前案件", placeholder="例如：周某主张的金额现在核到多少？", max_chars=1000)
-        st.caption("快捷查询不联网。自然语言查询仅在选择 DeepSeek 后调用模型规划，最多 4 个只读步骤；事实和金额仍由本地代码生成。")
-        submitted = st.form_submit_button("查询案件事实", use_container_width=True)
+        with st.form(f"{panel_key}_question"):
+            question = st.text_input("询问当前案件", placeholder="例如：周某主张的金额现在核到多少？", max_chars=1000)
+            st.caption("快捷查询不联网。自然语言查询仅在选择 DeepSeek 后调用模型规划，最多 4 个只读步骤；事实和金额仍由本地代码生成。")
+            submitted = st.form_submit_button("查询案件事实", use_container_width=True)
     if submitted:
         if not question.strip():
             st.warning("请输入具体问题，或使用上方快捷查询。")

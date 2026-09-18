@@ -35,6 +35,26 @@ def _decisions_by_claim(context: ToolContext) -> dict[str, Any]:
     return decisions
 
 
+def _amount_split(decisions: list[Any]) -> dict[str, dict[str, str]]:
+    """把汇总口径拆成「人工确认」与「系统拟制（未签署）」两组，互不混算。
+
+    外层的 total_covered_amount 是“当前决策口径”（人工优先、缺省取系统拟制），
+    绝不能在没有人工签署时被读成“已确证”。
+    """
+    human = [d for d in decisions if d.decision_type.value == "HUMAN_CONFIRMED"]
+    system = [d for d in decisions if d.decision_type.value != "HUMAN_CONFIRMED"]
+
+    def pack(group: list[Any]) -> dict[str, str]:
+        return {
+            "claim_count": str(len(group)),
+            "covered_amount": f"{sum((d.covered_amount for d in group), Decimal('0')):.2f}",
+            "disputed_amount": f"{sum((d.disputed_amount for d in group), Decimal('0')):.2f}",
+            "uncovered_amount": f"{sum((d.uncovered_amount for d in group), Decimal('0')):.2f}",
+        }
+
+    return {"human_confirmed": pack(human), "system_proposed": pack(system)}
+
+
 class GetCaseOverviewParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -106,6 +126,8 @@ def get_case_overview(context: ToolContext, params: GetCaseOverviewParams) -> di
             "total_covered_amount": f"{summary.total_covered_amount:.2f}",
             "total_uncovered_amount": f"{summary.total_uncovered_amount:.2f}",
             "total_disputed_amount": f"{summary.total_disputed_amount:.2f}",
+            "amount_basis": "current_decision",
+            **_amount_split(decisions),
             "fully_corroborated_count": summary.fully_corroborated_count,
             "partially_corroborated_count": summary.partially_corroborated_count,
             "unsupported_count": summary.unsupported_count,

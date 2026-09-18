@@ -428,11 +428,14 @@ class ExecutionAuditTest(QueryTestCase):
         self.assertEqual([name for name, _ in self.tools.calls], ["get_case_overview"])
         self.assertEqual(len(response["audit"]), 1)
 
-    def test_audit_masks_account_arguments_while_results_keep_them(self):
+    def test_audit_and_results_both_mask_account_arguments(self):
+        # 导出的查询记录就是 response 本体，results 与 audit 必须同样脱敏，
+        # 否则“下载本次查询记录”会泄露完整账号。
         response = self.run_query("账户", tool_name="get_account_profile",
                                   arguments={"account": "6222021234567890123"})
         self.assertEqual(response["audit"][0]["arguments"]["account"], "***************0123")
-        self.assertEqual(response["results"][0]["arguments"]["account"], "6222021234567890123")
+        self.assertEqual(response["results"][0]["arguments"]["account"], "***************0123")
+        self.assertNotIn("6222021234567890123", json.dumps(response, ensure_ascii=False, default=str))
 
     def test_audit_masks_long_digit_strings_under_generic_keys(self):
         self.repatch(FakeTools(results={"get_account_profile": {"ok": True}}))

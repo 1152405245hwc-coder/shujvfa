@@ -10,6 +10,21 @@
   font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
 }
 
+.ff-root:fullscreen {
+  background: #f8fafc;
+}
+
+/* 全屏阅览：脱离文档流的整屏覆盖层（组件在主文档 shadow DOM 中，无 iframe 边界） */
+.ff-root.ff-expanded {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999999;
+  background: #f8fafc;
+}
+
 .ff-canvas {
   position: absolute;
   inset: 0;
@@ -50,7 +65,7 @@
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid #e2e7ea;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: 13px;
   color: #55636e;
 }
 
@@ -58,6 +73,24 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+
+.ff-legend .ff-node {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 1px solid transparent;
+}
+
+.ff-legend .ff-node.victim {
+  background: #eaf3ee;
+  border-color: #276749;
+  border-radius: 3px;
+}
+
+.ff-legend .ff-node.suspect {
+  background: #fef2f2;
+  border-color: #dc2626;
 }
 
 .ff-legend .ff-line {

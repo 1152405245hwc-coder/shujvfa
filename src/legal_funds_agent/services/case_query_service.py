@@ -85,6 +85,10 @@ _STATUS_LABELS: dict[str, str] = {
     "MATERIAL_EVIDENCE_CONFLICT": "材料之间存在矛盾",
     "MISSING_TRANSACTION": "未找到对应流水",
     "DISPUTED_TRANSACTION": "存在争议流水",
+    # 汇总金额口径说明：人工确认为准；未人工签署的主张暂按系统拟制统计，不等于已确证。
+    "current_decision": "当前决策口径（人工确认为准；未人工签署的主张暂按系统拟制统计，不等于已确证）",
+    "system": "系统拟制",
+    "human": "人工确认",
 }
 
 # 用于生成「为什么没有计入」的系统口径说明。只说明系统规则，不新增任何数值。
@@ -108,8 +112,10 @@ _FIELD_LABELS = {
     "payer_name": "付款人", "payee_name": "收款人", "name": "名称", "entity": "主体",
     "amount": "金额", "claimed_amount": "指控金额", "covered_amount": "已覆盖",
     "uncovered_amount": "未覆盖", "disputed_amount": "争议金额",
-    "total_claimed_amount": "指控总额", "total_covered_amount": "已确证覆盖总额",
+    "total_claimed_amount": "指控总额", "total_covered_amount": "当前决策口径覆盖金额",
     "total_uncovered_amount": "未覆盖缺口", "total_disputed_amount": "争议总额",
+    "amount_basis": "汇总口径", "human_confirmed": "人工确认（已签署）",
+    "system_proposed": "系统建议（未人工确认）", "claim_count": "主张笔数",
     "total_refund_amount": "疑似转回参考值", "net_claimed_amount": "扣除疑似转回参考",
     "date": "日期", "time": "时间", "time_start": "起始时间", "time_end": "截止时间",
     "status": "状态", "review_status": "复核结论", "disposition": "处置",
@@ -371,8 +377,10 @@ def _execute(context: Any, registry: Any, steps: list[dict[str, Any]]) -> tuple[
 ]:
     """Run the pre-validated plan. Stops at the first tool failure.
 
-    ``results`` carries the original arguments so the query can be replayed; ``audit``
-    carries masked arguments so an exported record never shows a full account number.
+    Both ``results`` and ``audit`` carry masked arguments: the exported query record
+    (downloadable from the UI) must never contain a full account number, so replay uses
+    the masked form as well. Raw arguments only exist in-process for the duration of the
+    tool call itself.
     """
     results: list[dict[str, Any]] = []
     audit: list[dict[str, Any]] = []
@@ -406,7 +414,7 @@ def _execute(context: Any, registry: Any, steps: list[dict[str, Any]]) -> tuple[
             "timestamp": timestamp,
             "status": "success",
         })
-        results.append({"tool_name": name, "arguments": arguments, "result": result})
+        results.append({"tool_name": name, "arguments": _mask_arguments(arguments), "result": result})
     return results, audit, warnings
 
 
@@ -585,9 +593,18 @@ def _summarize_result(name: str, result: dict[str, Any]) -> list[str]:
         transactions = section("transaction_count")
         lines = [
             f"全案 {result.get('claim_count', 0)} 条主张，指控总额 {money(summary.get('total_claimed_amount')) or '—'}；"
-            f"已确证覆盖 {money(summary.get('total_covered_amount')) or '—'}，"
+            f"当前决策口径覆盖 {money(summary.get('total_covered_amount')) or '—'}，"
             f"未覆盖缺口 {money(summary.get('total_uncovered_amount')) or '—'}。"
         ]
+        human = summary.get("human_confirmed") or {}
+        system = summary.get("system_proposed") or {}
+        if human.get("claim_count") or system.get("claim_count"):
+            lines.append(
+                f"其中人工确认（已签署）覆盖 {money(human.get('covered_amount')) or '—'}"
+                f"（{human.get('claim_count', 0)} 笔主张）；"
+                f"系统建议（未人工确认）覆盖 {money(system.get('covered_amount')) or '—'}"
+                f"（{system.get('claim_count', 0)} 笔主张），以人工签署为准。"
+            )
         if candidates or weak or refunds:
             lines.append(
                 f"唯一候选流水 {candidates.get('unique_canonical_count', 0)} 笔"

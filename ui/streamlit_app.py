@@ -201,45 +201,26 @@ section.main > div {
     font-size: 16.5px;
     letter-spacing: 0.02em;
 }
-/* The navigation is rendered as buttons for reliable jumps, but keeps the
-   former radio/link visual language: flat white surface, left alignment and
-   navy active marker instead of a dark filled primary button. */
-[data-testid="stSidebar"] .stButton button[aria-label*="案件审查概览"],
-[data-testid="stSidebar"] .stButton button[aria-label*="涉案资金流水"],
-[data-testid="stSidebar"] .stButton button[aria-label*="资金证据核验"],
-[data-testid="stSidebar"] .stButton button[aria-label*="审查底稿留痕"],
-[data-testid="stSidebar"] .stButton button[aria-label*="案件关系图"] {
-    min-height: 44px !important;
+/* Streamlit 1.64 的按钮 aria-label 为空，不能按文字匹配；选中态是唯一渲染为
+   stBaseButton-primary 的侧边栏按钮（重命名弹窗里的保存按钮在 body 级 portal 中，
+   不在侧边栏 DOM 内），因此用 data-testid 区分。选中色与「当前案件 ✓ 复核已签署完成」
+   状态徽标一致：淡绿底 + 深绿左条。 */
+[data-testid="stSidebar"] .stButton button[data-testid="stBaseButton-primary"],
+[data-testid="stSidebar"] .stButton button[data-testid="stBaseButton-primary"]:hover,
+[data-testid="stSidebar"] .stButton button[data-testid="stBaseButton-primary"]:active,
+[data-testid="stSidebar"] .stButton button[data-testid="stBaseButton-primary"]:focus,
+[data-testid="stSidebar"] .stButton button[data-testid="stBaseButton-primary"]:focus-visible,
+[data-testid="stSidebar"] .stButton button[data-testid="stBaseButton-primary"]:disabled {
+    background: var(--status-ok-bg) !important;
+    border: 0 !important;
+    border-left: 2px solid var(--status-ok) !important;
+    border-radius: 0 !important;
+    color: var(--status-ok) !important;
+    font-weight: 700 !important;
     justify-content: flex-start !important;
     text-align: left !important;
-    border: 0 !important;
-    border-left: 2px solid transparent !important;
-    border-radius: 0 !important;
-    background: transparent !important;
-    color: var(--ink) !important;
-    font-size: 16.5px !important;
-    font-weight: 550 !important;
+    min-height: 44px !important;
     padding-left: 14px !important;
-}
-[data-testid="stSidebar"] .stButton button[aria-label*="案件审查概览"]:hover,
-[data-testid="stSidebar"] .stButton button[aria-label*="涉案资金流水"]:hover,
-[data-testid="stSidebar"] .stButton button[aria-label*="资金证据核验"]:hover,
-[data-testid="stSidebar"] .stButton button[aria-label*="审查底稿留痕"]:hover,
-[data-testid="stSidebar"] .stButton button[aria-label*="案件关系图"]:hover {
-    background: #f0f2f4 !important;
-    border-left-color: #bcc3cd !important;
-}
-/* Selected nav item is rendered as a primary button, then flattened back to
-   the link style with the navy left bar as the single active marker. */
-[data-testid="stSidebar"] .stButton button[aria-label*="案件审查概览"][kind="primary"],
-[data-testid="stSidebar"] .stButton button[aria-label*="涉案资金流水"][kind="primary"],
-[data-testid="stSidebar"] .stButton button[aria-label*="资金证据核验"][kind="primary"],
-[data-testid="stSidebar"] .stButton button[aria-label*="审查底稿留痕"][kind="primary"],
-[data-testid="stSidebar"] .stButton button[aria-label*="案件关系图"][kind="primary"] {
-    background: #eef1f5 !important;
-    border-left-color: var(--navy) !important;
-    color: var(--navy) !important;
-    font-weight: 700 !important;
 }
 
 /* Swiss Editorial Masthead */
@@ -2479,11 +2460,10 @@ def transactions_page(result) -> None:
     refund_txs_filtered = _filter_txs(refund_txs)
     all_rows_filtered = _filter_txs(all_rows)
 
-    tab_pay, tab_refund, tab_all, tab_graph = st.tabs([
+    tab_pay, tab_refund, tab_all = st.tabs([
         f"涉案流出支付流水 ({len(pay_txs)} 笔 · ¥{sum_pay:,.2f})",
         f"疑似转回流水 ({len(refund_txs)} 笔 · ¥{sum_refund:,.2f})",
         f"全案银行流水总底册 ({len(all_rows)} 笔)",
-        "账户关系图",
     ])
 
     with tab_pay:
@@ -2499,11 +2479,11 @@ def transactions_page(result) -> None:
         st.dataframe([t[1] for t in all_rows_filtered], width="stretch", hide_index=True)
         st.caption(f"筛选命中 {len(all_rows_filtered)} / 共 {len(all_rows)} 笔。全案总计导入 {len(result.transactions)} 笔原始银行记录；前两类台账按规范化唯一事件展示。")
 
-    with tab_graph:
-        render_section_heading("03 / 拓扑图", "核心涉案资金流向图", f"从 {len(result.transactions)} 笔原始流水提取主要证据路径：{len(topo.nodes)} 个账户节点、{len(topo.edges)} 条唯一交易事件")
-        _render_fund_flow(topo, height=540, key="fund_flow_focus", transactions=result.transactions, disputed_names=disputed_names)
-        with st.expander("查看全案资金流向图（全部账户与流水）", expanded=False):
-            _render_fund_flow(all_topo, height=560, key="fund_flow_all", transactions=result.transactions, disputed_names=disputed_names)
+    # 拓扑图与台账同页分区展示：台账在上、图在下，对照查看不需要切换 Tab。
+    render_section_heading("03 / 拓扑图", "核心涉案资金流向图", f"从 {len(result.transactions)} 笔原始流水提取主要证据路径：{len(topo.nodes)} 个账户节点、{len(topo.edges)} 条唯一交易事件")
+    _render_fund_flow(topo, height=760, key="fund_flow_focus", transactions=result.transactions, disputed_names=disputed_names)
+    with st.expander("查看全案资金流向图（全部账户与流水）", expanded=False):
+        _render_fund_flow(all_topo, height=840, key="fund_flow_all", transactions=result.transactions, disputed_names=disputed_names)
 
 
 def review_page(result) -> None:
@@ -2771,7 +2751,7 @@ def review_page(result) -> None:
                 "审核顺序": st.column_config.TextColumn(width="small"),
                 "_tid": None,
             },
-            column_order=["风险等级", "审核顺序", "流水号", "交易日期", "金额", "付款人", "收款人", "风险提示", "核对规则", "原始证据定位", "处置决断", "认定理由", "经办备注"],
+            column_order=["风险等级", "审核顺序", "交易日期", "金额", "付款人", "收款人", "处置决断", "认定理由", "经办备注"],
             key=editor_state_key,
         )
 
@@ -2783,32 +2763,35 @@ def review_page(result) -> None:
             "流水详情查看",
             inspector_options,
             key=f"tx_inspector_{claim.id}",
-            help="选择一笔候选流水，下方显示其证据详情；处置仍在左侧审查表完成。",
+            help="选择一笔候选流水，「详情」页显示其证据依据；处置仍在左侧审查表完成。",
         )
         picked_index = inspector_options.index(picked) - 1
-        if picked_index < 0:
-            st.caption("从上方选择一笔候选流水，此处显示其证据详情与当前处置。")
-        else:
-            sel_row = candidate_rows[picked_index]
-            sel_tx = result.transactions[sel_row["_tid"]]
-            sel_candidate = next((c for c in candidates if c.transaction_id == sel_row["_tid"]), None)
-            _evidence_card(f"流水详情 · {sel_tx.transaction_id}", [
-                ("金额 / 日期", f"¥{sel_tx.amount:,.2f} · {sel_tx.date}"),
-                ("付款方", f"{sel_tx.payer_name or '-'}（{sel_tx.payer_account_id or '-'}）"),
-                ("收款方", f"{sel_tx.payee_name or '-'}（{sel_tx.payee_account_id or '-'}）"),
-                ("核对规则", _rules_to_chinese(sel_candidate.matched_rules) if sel_candidate else "-"),
-                ("风险提示", _risks_to_chinese(sel_candidate.risk_codes) if sel_candidate else "-"),
-                ("原始证据定位", _source_locator_label(sel_tx)),
-                ("当前处置", str(sel_row.get("处置决断") or "-")),
-                ("认定理由", str(sel_row.get("认定理由") or "-")),
-            ])
-        _render_case_query(
-            result, claim_id=claim.id,
-            transaction_id=sel_tx.id if picked_index >= 0 else None,
-            key="review_query",
-        )
+        tab_tx_detail, tab_tx_query = st.tabs(["详情", "智能查询"])
+        with tab_tx_detail:
+            if picked_index < 0:
+                st.caption("从上方选择一笔候选流水，此处显示其证据详情与当前处置。")
+            else:
+                sel_row = candidate_rows[picked_index]
+                sel_tx = result.transactions[sel_row["_tid"]]
+                sel_candidate = next((c for c in candidates if c.transaction_id == sel_row["_tid"]), None)
+                _evidence_card(f"流水详情 · {sel_tx.transaction_id}", [
+                    ("金额 / 日期", f"¥{sel_tx.amount:,.2f} · {sel_tx.date}"),
+                    ("付款方", f"{sel_tx.payer_name or '-'}（{sel_tx.payer_account_id or '-'}）"),
+                    ("收款方", f"{sel_tx.payee_name or '-'}（{sel_tx.payee_account_id or '-'}）"),
+                    ("核对规则", _rules_to_chinese(sel_candidate.matched_rules) if sel_candidate else "-"),
+                    ("风险提示", _risks_to_chinese(sel_candidate.risk_codes) if sel_candidate else "-"),
+                    ("原始证据定位", _source_locator_label(sel_tx)),
+                    ("当前处置", str(sel_row.get("处置决断") or "-")),
+                    ("认定理由", str(sel_row.get("认定理由") or "-")),
+                ])
+        with tab_tx_query:
+            _render_case_query(
+                result, claim_id=claim.id,
+                transaction_id=sel_tx.id if picked_index >= 0 else None,
+                key="review_query",
+            )
 
-    st.caption("普通候选的完整字段、处置选择和原始行号统一保留在上方审查表；需要深查时按 P 编号回到对应行。")
+    st.caption("审查表聚焦处置操作；流水号、核对规则、风险提示与原始证据定位在右侧「流水详情」查看，按 P 编号对应回左侧行。")
     # 编辑结果在本轮渲染即可见，签署前的“完成前检查”直接用它实时统计。
     edited_records = _editor_records(edited)
 
@@ -3049,41 +3032,44 @@ def evidence_graph_page(result) -> None:
         def _ref_text(ref: dict) -> str:
             return " · ".join(f"{k}={v}" for k, v in ref.items() if v not in (None, "", []))
 
-        if selection.get("type") == "node":
-            items = [
-                ("节点类型", entry.get("role_label") or entry.get("type", "-")),
-                ("脱敏账号", entry.get("masked_account") or "-"),
-                ("主张金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
-            ]
-            refs = entry.get("source_refs") or []
-            for idx, ref in enumerate(refs[:8], 1):
-                items.append((f"来源 {idx:02d}", _ref_text(ref)))
-            if len(refs) > 8:
-                items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
-            _evidence_card(f"节点 · {entry.get('label') or entry.get('name', '-')}", items)
-        else:
-            items = [
-                ("关系类型", entry.get("type", "-")),
-                ("关系性质", "! 待证/争议（不构成确定事实）" if entry.get("disputed") else "✓ 由确定性记录直接得出"),
-                ("累计金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
-                ("流水笔数", f"{entry.get('count', 1)} 笔"),
-                ("说明", entry.get("reason") or "-"),
-            ]
-            refs = entry.get("source_refs") or []
-            for idx, ref in enumerate(refs[:8], 1):
-                items.append((f"来源 {idx:02d}", _ref_text(ref)))
-            if len(refs) > 8:
-                items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
-            _evidence_card("关系 · 待人工核验" if entry.get("disputed") else "关系 · 记录确认", items)
-        query_refs = entry.get("source_refs") or []
-        selected_claim_id = next((ref.get("claim_id") for ref in query_refs if ref.get("claim_id")), None)
-        selected_tx_ids = {ref["transaction_id"] for ref in query_refs if ref.get("transaction_id")}
-        selected_tx_id = next(iter(selected_tx_ids)) if len(selected_tx_ids) == 1 else None
-        _render_case_query(
-            result, claim_id=selected_claim_id, transaction_id=selected_tx_id,
-            entity=entry.get("name") if selection.get("type") == "node" else None,
-            key="graph_query",
-        )
+        tab_detail, tab_graph_query = st.tabs(["详情", "智能查询"])
+        with tab_detail:
+            if selection.get("type") == "node":
+                items = [
+                    ("节点类型", entry.get("role_label") or entry.get("type", "-")),
+                    ("脱敏账号", entry.get("masked_account") or "-"),
+                    ("主张金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
+                ]
+                refs = entry.get("source_refs") or []
+                for idx, ref in enumerate(refs[:8], 1):
+                    items.append((f"来源 {idx:02d}", _ref_text(ref)))
+                if len(refs) > 8:
+                    items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
+                _evidence_card(f"节点 · {entry.get('label') or entry.get('name', '-')}", items)
+            else:
+                items = [
+                    ("关系类型", entry.get("type", "-")),
+                    ("关系性质", "! 待证/争议（不构成确定事实）" if entry.get("disputed") else "✓ 由确定性记录直接得出"),
+                    ("累计金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
+                    ("流水笔数", f"{entry.get('count', 1)} 笔"),
+                    ("说明", entry.get("reason") or "-"),
+                ]
+                refs = entry.get("source_refs") or []
+                for idx, ref in enumerate(refs[:8], 1):
+                    items.append((f"来源 {idx:02d}", _ref_text(ref)))
+                if len(refs) > 8:
+                    items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
+                _evidence_card("关系 · 待人工核验" if entry.get("disputed") else "关系 · 记录确认", items)
+        with tab_graph_query:
+            query_refs = entry.get("source_refs") or []
+            selected_claim_id = next((ref.get("claim_id") for ref in query_refs if ref.get("claim_id")), None)
+            selected_tx_ids = {ref["transaction_id"] for ref in query_refs if ref.get("transaction_id")}
+            selected_tx_id = next(iter(selected_tx_ids)) if len(selected_tx_ids) == 1 else None
+            _render_case_query(
+                result, claim_id=selected_claim_id, transaction_id=selected_tx_id,
+                entity=entry.get("name") if selection.get("type") == "node" else None,
+                key="graph_query",
+            )
 
 
 def audit_page(result) -> None:

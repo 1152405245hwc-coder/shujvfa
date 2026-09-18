@@ -79,12 +79,14 @@ render_case_query_panel(result, claim_id=result.claim.id,
     transaction_id=next(iter(result.transactions)), key="test_query")
 ''', default_timeout=20).run()
 
-    def test_six_shortcuts_show_results_without_mutating_review(self):
+    def test_all_shortcuts_show_results_without_mutating_review(self):
         app = self.app()
         self.assertFalse(app.exception)
         before = app.session_state["result"].system_decision.model_dump(mode="json")
-        for index in range(6):
-            button = next(b for b in app.button if b.key and b.key.endswith(f"_quick_{index}"))
+        # 3 个上下文快捷项 + 「更多查询」里的 3 个全案快捷项。
+        suffixes = [f"_quick_{index}" for index in range(3)] + [f"_more_{index}" for index in range(3)]
+        for suffix in suffixes:
+            button = next(b for b in app.button if b.key and b.key.endswith(suffix))
             button.click().run()
             self.assertFalse(app.exception)
             self.assertFalse(app.error)

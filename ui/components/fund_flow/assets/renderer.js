@@ -10,7 +10,7 @@ const FF_COLORS = {
 };
 
 const FF_NODE_W = 240;
-const FF_NODE_H = 84;
+const FF_NODE_H = 96;
 
 // Wheel zoom step: zoom multiplies by FF_WHEEL_STEP for every 100px of wheel
 // delta (one notch on a standard mouse). Cytoscape's own wheel handling is
@@ -150,8 +150,8 @@ function ffPresetLayout(cy) {
 }
 
 function ffAccentColor(displayRole) {
-  if (displayRole === 'victim') return FF_COLORS.navy;
-  if (displayRole === 'suspect') return FF_COLORS.ink;
+  if (displayRole === 'victim') return '#276749';
+  if (displayRole === 'suspect') return '#dc2626';
   if (displayRole === 'third_party_disputed') return FF_COLORS.gold;
   return '#9aa7b0';
 }
@@ -216,8 +216,8 @@ function ffFitWhenReady(cy, container, restore) {
     // readability floor: on dense graphs fit() can shrink text below a usable
     // size; prefer a readable zoom centred on the fund source over showing
     // everything at once.
-    if (cy.zoom() < 0.45) {
-      cy.zoom(0.45);
+    if (cy.zoom() < 0.55) {
+      cy.zoom(0.55);
       const victim = cy.nodes('[display_role = "victim"]').first();
       if (victim && victim.length) cy.center(victim); else cy.center();
     }
@@ -285,9 +285,12 @@ export default function (component) {
     '<div class="ff-toolbar">' +
     '<button type="button" data-ff="fit">适配视图</button>' +
     '<button type="button" data-ff="reset">重置缩放</button>' +
+    '<button type="button" data-ff="fullscreen">全屏阅览</button>' +
     '<button type="button" data-ff="png">导出高清图</button>' +
     '</div>' +
     '<div class="ff-legend">' +
+    '<span class="ff-key"><i class="ff-node victim"></i>被害人 / 资金来源</span>' +
+    '<span class="ff-key"><i class="ff-node suspect"></i>涉案一级账户</span>' +
     '<span class="ff-key"><i class="ff-line"></i>已纳入</span>' +
     '<span class="ff-key"><i class="ff-line dashed"></i>争议项</span>' +
     '<span class="ff-key"><i class="ff-line refund"></i>疑似转回</span>' +
@@ -386,12 +389,33 @@ export default function (component) {
           label: 'data(display)',
           'text-wrap': 'wrap',
           'text-max-width': String(FF_NODE_W - 20) + 'px',
-          'font-size': 14,
+          'font-size': 16,
+          'font-weight': 600,
           'line-height': 1.45,
           color: FF_COLORS.ink,
           'text-valign': 'center',
           'text-halign': 'center',
           padding: '8px',
+        },
+      },
+      {
+        // 被害人（资金来源）：圆角 + 淡绿底，与全局「已确认」状态色一致，一眼可辨。
+        selector: 'node[kind = "account"][display_role = "victim"]',
+        style: {
+          shape: 'roundrectangle',
+          'background-color': '#eaf3ee',
+          'border-color': '#276749',
+          'border-width': 1.5,
+        },
+      },
+      {
+        // 嫌疑人（涉案一级账户）：淡红底 + 红描边，与全局「冲突/警示」状态色同源，
+        // 与被害人的淡绿形成直接对照。
+        selector: 'node[kind = "account"][display_role = "suspect"]',
+        style: {
+          'background-color': '#fef2f2',
+          'border-color': '#dc2626',
+          'border-width': 1.5,
         },
       },
       {
@@ -420,11 +444,12 @@ export default function (component) {
           'arrow-scale': 0.9,
           'curve-style': 'bezier',
           label: 'data(amount_label)',
-          'font-size': 12,
+          'font-size': 13,
+          'font-weight': 600,
           color: FF_COLORS.label,
           'text-background-color': '#fdfdfb',
           'text-background-opacity': 1,
-          'text-background-padding': '2px',
+          'text-background-padding': '3px',
           'text-margin-y': -8,
         },
       },
@@ -469,8 +494,9 @@ export default function (component) {
         },
       },
       {
+        // 金色选中框在白色、淡绿、淡红三种节点底色上都清晰可见。
         selector: 'node:selected',
-        style: { 'border-color': FF_COLORS.navy, 'border-width': 2 },
+        style: { 'border-color': FF_COLORS.gold, 'border-width': 2.5 },
       },
       {
         selector: 'edge:selected',
@@ -486,6 +512,14 @@ export default function (component) {
           'border-color': FF_COLORS.navy,
           'border-width': 2,
           'background-color': '#eef3f8',
+        },
+      },
+      {
+        // 邻居高亮不能把嫌疑人节点的淡红底色洗掉。
+        selector: 'node.ff-neighbor[display_role = "suspect"]',
+        style: {
+          'background-color': '#fef2f2',
+          'border-color': FF_COLORS.gold,
         },
       },
       {
@@ -593,6 +627,25 @@ export default function (component) {
     a.download = '资金流向图.png';
     a.click();
   });
+  // 全屏阅览：组件渲染在主文档的 shadow DOM 里（没有 iframe 边界），
+  // 直接把根节点切成 fixed 全屏覆盖层。全屏后仍是同一个活图——
+  // 滚轮缩放、拖拽平移、点选节点、悬浮提示完全一致；Esc 或再点一次退出。
+  const fsBtn = root.querySelector('[data-ff="fullscreen"]');
+  const setExpanded = (on) => {
+    root.classList.toggle('ff-expanded', on);
+    fsBtn.textContent = on ? '退出全屏' : '全屏阅览';
+    document.body.style.overflow = on ? 'hidden' : '';
+    const px = on ? window.innerHeight : viewH;
+    root.style.height = px + 'px';
+    canvas.style.height = px + 'px';
+    cy.resize();
+    cy.fit(undefined, 24);
+  };
+  fsBtn.addEventListener('click', () => setExpanded(!root.classList.contains('ff-expanded')));
+  document.addEventListener('keydown', (evt) => {
+    if (evt.key === 'Escape' && root.classList.contains('ff-expanded')) setExpanded(false);
+  });
+  cy.on('destroy', () => { document.body.style.overflow = ''; });
 
   function moveTip(evt) {
     const rect = root.getBoundingClientRect();
