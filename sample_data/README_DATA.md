@@ -26,6 +26,6 @@
 | --- | --- |
 | `demo_case_001/` | 最小演示案件（起诉书 + 被害人陈述 + 流水 CSV） |
 | `case_packages/GOLD_CASE_001/` | 金标准回归案件一（单被害人） |
-| `case_packages/GOLD_CASE_002/` | 金标准回归案件二（多被害人、三笔指控，含 hidden 比对材料） |
+| `case_packages/GOLD_CASE_002/` | 金标准回归案件二（3 名被害人、4 项付款主张，含 hidden 比对材料） |
 | `gold_cases/` | 金标准断言集（G01–G05 + manifest） |
 | `holdout_cases/` | 留出验证集（H01–H05 + manifest） |

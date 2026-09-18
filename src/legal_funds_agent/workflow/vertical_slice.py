@@ -247,6 +247,15 @@ def run_case_inputs(*, indictment_text: str, statement_text: str, csv_text: str,
             fact = statement_facts_by_victim.get(key)
             if fact is None:
                 continue
+            if len(victim_claims) == 1:
+                # A victim with a single claim leaves nothing to disambiguate: the
+                # statement is about that claim, so any difference (date, amount,
+                # recipient) must be reported as a conflict. Applying the multi-claim
+                # exclusion rules here would silently demote a real contradiction to
+                # "the statement does not cover this claim" — the exact failure mode the
+                # conflict check exists to prevent.
+                fact_attributed_claims.add(victim_claims[0].id)
+                continue
             compatible = [c for c in victim_claims if _fact_may_describe_claim(fact, c)]
             exact = [c for c in compatible if fact.amount == c.claimed_amount]
             for c in (exact or compatible[:1]):

@@ -84,7 +84,11 @@ st.markdown("""
 
 /* Global resets & Typography */
 html {
-    font-size: 17.5px;
+    font-size: 16.5px;
+}
+/* 数据工作台密度分级：caption 与辅助说明比正文更紧凑 */
+[data-testid="stCaptionContainer"], .stCaption {
+    font-size: 13.5px !important;
 }
 .stApp {
     background: var(--paper);
@@ -203,7 +207,8 @@ section.main > div {
 [data-testid="stSidebar"] .stButton button[aria-label*="案件审查概览"],
 [data-testid="stSidebar"] .stButton button[aria-label*="涉案资金流水"],
 [data-testid="stSidebar"] .stButton button[aria-label*="资金证据核验"],
-[data-testid="stSidebar"] .stButton button[aria-label*="审查底稿留痕"] {
+[data-testid="stSidebar"] .stButton button[aria-label*="审查底稿留痕"],
+[data-testid="stSidebar"] .stButton button[aria-label*="案件关系图"] {
     min-height: 44px !important;
     justify-content: flex-start !important;
     text-align: left !important;
@@ -219,9 +224,22 @@ section.main > div {
 [data-testid="stSidebar"] .stButton button[aria-label*="案件审查概览"]:hover,
 [data-testid="stSidebar"] .stButton button[aria-label*="涉案资金流水"]:hover,
 [data-testid="stSidebar"] .stButton button[aria-label*="资金证据核验"]:hover,
-[data-testid="stSidebar"] .stButton button[aria-label*="审查底稿留痕"]:hover {
+[data-testid="stSidebar"] .stButton button[aria-label*="审查底稿留痕"]:hover,
+[data-testid="stSidebar"] .stButton button[aria-label*="案件关系图"]:hover {
     background: #f0f2f4 !important;
     border-left-color: #bcc3cd !important;
+}
+/* Selected nav item is rendered as a primary button, then flattened back to
+   the link style with the navy left bar as the single active marker. */
+[data-testid="stSidebar"] .stButton button[aria-label*="案件审查概览"][kind="primary"],
+[data-testid="stSidebar"] .stButton button[aria-label*="涉案资金流水"][kind="primary"],
+[data-testid="stSidebar"] .stButton button[aria-label*="资金证据核验"][kind="primary"],
+[data-testid="stSidebar"] .stButton button[aria-label*="审查底稿留痕"][kind="primary"],
+[data-testid="stSidebar"] .stButton button[aria-label*="案件关系图"][kind="primary"] {
+    background: #eef1f5 !important;
+    border-left-color: var(--navy) !important;
+    color: var(--navy) !important;
+    font-weight: 700 !important;
 }
 
 /* Swiss Editorial Masthead */
@@ -255,12 +273,16 @@ section.main > div {
     background: var(--surface);
 }
 .case-masthead h1 {
-    font-size: 46px;
+    font-size: 40px;
     line-height: 1.15;
     margin: 16px 0 6px;
     color: var(--ink);
     font-weight: 750;
     letter-spacing: -0.02em;
+}
+/* 首页品牌标题大于案件页标题，避免每个案件页都像宣传页 */
+.case-masthead.landing-masthead h1 {
+    font-size: 46px;
 }
 .masthead-subtitle {
     font-size: 17.5px;
@@ -1351,17 +1373,35 @@ def _restore_case_from_database(database_path: Path, case_id: str):
 
     first_claim = claims[0] if claims else None
     if first_claim is None:
-        first_claim = Claim(
-            id=f"CLM-{case_id}", case_id=case_id, victim_name="未知",
-            claimed_amount=Decimal("0"), time_start=date.today(), time_end=date.today(),
-            source_locator_ids=["RESTORED-CLAIM"], extraction_status="human_confirmed",
-        )
-        claims = [first_claim]
+        # Orphaned transactions are not a valid claim or a signed review snapshot.
+        return None
+
+    from dataclasses import replace
+    from legal_funds_agent.services.candidate_matcher import find_weak_payer_signals
+    from legal_funds_agent.services.transaction_analysis import normalize_party_name
 
     candidates_by_claim = {
         claim.id: match_claim_transactions(claim, list(transactions.values()))
         for claim in claims
     }
+    # Rebuild read-only recall signals after refresh; never replace signed decisions.
+    victims = frozenset(normalize_party_name(claim.victim_name) for claim in claims)
+    weak_signals_by_claim = {
+        claim.id: find_weak_payer_signals(claim, list(transactions.values()), exclude_payer_names=victims)
+        for claim in claims
+    }
+    key_owners = {}
+    for claim_id, candidates in candidates_by_claim.items():
+        for candidate in candidates:
+            event_key = transaction_canonical_key(transactions[candidate.transaction_id])
+            key_owners.setdefault(event_key, set()).add(claim_id)
+    for claim_id, candidates in candidates_by_claim.items():
+        candidates_by_claim[claim_id] = [
+            replace(candidate, risk_codes=tuple(dict.fromkeys((*candidate.risk_codes, "CROSS_CLAIM_DUPLICATION"))))
+            if len(key_owners[transaction_canonical_key(transactions[candidate.transaction_id])]) > 1
+            else candidate
+            for candidate in candidates
+        ]
     first_candidates = candidates_by_claim.get(first_claim.id, [])
     first_decision = decisions.get(first_claim.id)
     if first_decision is None:
@@ -1371,15 +1411,9 @@ def _restore_case_from_database(database_path: Path, case_id: str):
         decisions[first_claim.id] = first_decision
 
     duplicate_groups = find_duplicate_transactions(list(transactions.values()))
-    statement_fact = StatementPaymentFact(
-        victim_name=first_claim.victim_name,
-        recipient_name=first_claim.alleged_recipient_name,
-        amount=first_claim.claimed_amount,
-        payment_date=first_claim.time_start,
-        source_text="",
-        start_offset=0,
-        end_offset=0,
-    )
+    # Snapshots do not preserve statement extraction. Do not fabricate corroboration
+    # by copying the indictment's amount into an invented statement fact.
+    statement_fact = None
     result = WorkflowResult(
         task_id=f"RESTORED-{case_id}",
         claim=first_claim,
@@ -1398,6 +1432,9 @@ def _restore_case_from_database(database_path: Path, case_id: str):
         claims=claims,
         candidates_by_claim=candidates_by_claim,
         system_decisions_by_claim=decisions,
+        weak_signals_by_claim=weak_signals_by_claim,
+        statement_extraction_warnings=["RESTORED_STATEMENT_NOT_AVAILABLE"],
+        statement_facts_by_victim={claim.victim_name: None for claim in claims},
     )
     human_decision = (
         first_decision if first_decision.decision_type.value == "HUMAN_CONFIRMED" else None
@@ -1817,6 +1854,15 @@ def _evidence_card(title: str, items: list[tuple[str, str]], badge: tuple[str, s
     )
 
 
+def _render_case_query(result, *, claim_id=None, transaction_id=None, entity=None, key="case_query") -> None:
+    from case_query_panel import render_case_query_panel
+    render_case_query_panel(
+        result, supplementary_documents=_supplementary_documents(result),
+        claim_id=claim_id, transaction_id=transaction_id, entity=entity, key=key,
+    )
+
+
+
 def _editor_records(edited) -> list[dict]:
     if hasattr(edited, "to_dict"):
         return edited.to_dict("records")
@@ -1866,13 +1912,12 @@ def _apply_checklist_statuses(case_id: str, items: list[dict]) -> list[dict]:
 def _landing_page() -> None:
     """无案件首页：不是任何具体案件的 Masthead，只提供入口与最近案件。"""
     st.markdown(
-        '<header class="case-masthead">'
+        '<header class="case-masthead landing-masthead">'
         '<div class="masthead-top">'
         '<span class="masthead-case-code">资金链证审</span>'
         '<span class="masthead-status-badge">尚未加载案件</span>'
         '</div>'
         '<h1>资金证据审查系统</h1>'
-        '<p class="masthead-subtitle">资金证据审查工作台</p>'
         '<div class="masthead-meta">'
         '<span>起诉书 · 被害人陈述 · 银行流水交叉核验</span>'
         '<span class="meta-dot">·</span>'
@@ -2084,6 +2129,7 @@ def _materials_panel(active_case_id: str) -> None:
     elif source == "上传材料":
         st.markdown('<div class="section-kicker">案卷材料导入</div>', unsafe_allow_html=True)
         st.caption("按材料类型分别登记；完成度只统计客观上传状态，不构成材料完整性的法律判断。")
+        st.caption("说明：PNG / JPG 图片与扫描型 PDF 依赖 OCR 实验性能力，比赛镜像默认未启用；请优先使用 TXT / DOCX / 文本型 PDF / CSV / XLSX 材料。")
 
         intake_cards = [
             ("起诉书", True, "TXT / DOCX / PDF / PNG / JPG", "intake_indictment",
@@ -2574,6 +2620,8 @@ def review_page(result) -> None:
             f'<strong>被害人陈述冲突：</strong>笔录与起诉书存在矛盾（{"、".join([RISK_LABELS.get(r, r) for r in result.statement_conflicts])}）。</div>',
             unsafe_allow_html=True,
         )
+    elif "RESTORED_STATEMENT_NOT_AVAILABLE" in result.statement_extraction_warnings:
+        st.warning("当前为已保存案件的恢复视图，快照未保存陈述抽取结果；不能据此判断言词证据一致，请回查原始材料。")
     else:
         st.markdown(
             '<div class="accessible-notice ok"><span class="notice-icon">✓</span> '
@@ -2707,21 +2755,58 @@ def review_page(result) -> None:
             "_tid": tx.id,
         })
 
-    edited = st.data_editor(
-        candidate_rows,
-        width="stretch",
-        hide_index=True,
-        disabled=["风险等级", "审核顺序", "流水号", "交易日期", "付款人", "付款账户ID", "收款人", "收款账户ID", "金额", "核对规则", "风险提示", "原始证据定位", "_tid"],
-        column_config={
-            "处置决断": st.column_config.SelectboxColumn(options=list(DISPOSITION_CN.keys()), required=True, width="medium"),
-            "认定理由": st.column_config.SelectboxColumn(options=list(REASON_CN.keys()), required=True, width="medium"),
-            "金额": st.column_config.NumberColumn(format="¥ %.2f", width="small"),
-            "审核顺序": st.column_config.TextColumn(width="small"),
-            "_tid": None,
-        },
-        column_order=["风险等级", "审核顺序", "流水号", "交易日期", "金额", "付款人", "收款人", "风险提示", "核对规则", "原始证据定位", "处置决断", "认定理由", "经办备注"],
-        key=f"candidate_review_editor_v2_{claim.id}",
-    )
+    # 左工作表 + 右 Inspector：在右侧选择任意一笔候选流水，固定显示该笔的
+    # 证据详情与当前处置，不用在长表中横向滚动寻找上下文。
+    col_table, col_tx_inspector = st.columns([2, 1])
+    with col_table:
+        edited = st.data_editor(
+            candidate_rows,
+            width="stretch",
+            hide_index=True,
+            disabled=["风险等级", "审核顺序", "流水号", "交易日期", "付款人", "付款账户ID", "收款人", "收款账户ID", "金额", "核对规则", "风险提示", "原始证据定位", "_tid"],
+            column_config={
+                "处置决断": st.column_config.SelectboxColumn(options=list(DISPOSITION_CN.keys()), required=True, width="medium"),
+                "认定理由": st.column_config.SelectboxColumn(options=list(REASON_CN.keys()), required=True, width="medium"),
+                "金额": st.column_config.NumberColumn(format="¥ %.2f", width="small"),
+                "审核顺序": st.column_config.TextColumn(width="small"),
+                "_tid": None,
+            },
+            column_order=["风险等级", "审核顺序", "流水号", "交易日期", "金额", "付款人", "收款人", "风险提示", "核对规则", "原始证据定位", "处置决断", "认定理由", "经办备注"],
+            key=editor_state_key,
+        )
+
+    with col_tx_inspector:
+        inspector_options = ["（未选择）"] + [
+            f"{row['审核顺序']} · {row['流水号']} · ¥{row['金额']:,.2f}" for row in candidate_rows
+        ]
+        picked = st.selectbox(
+            "流水详情查看",
+            inspector_options,
+            key=f"tx_inspector_{claim.id}",
+            help="选择一笔候选流水，下方显示其证据详情；处置仍在左侧审查表完成。",
+        )
+        picked_index = inspector_options.index(picked) - 1
+        if picked_index < 0:
+            st.caption("从上方选择一笔候选流水，此处显示其证据详情与当前处置。")
+        else:
+            sel_row = candidate_rows[picked_index]
+            sel_tx = result.transactions[sel_row["_tid"]]
+            sel_candidate = next((c for c in candidates if c.transaction_id == sel_row["_tid"]), None)
+            _evidence_card(f"流水详情 · {sel_tx.transaction_id}", [
+                ("金额 / 日期", f"¥{sel_tx.amount:,.2f} · {sel_tx.date}"),
+                ("付款方", f"{sel_tx.payer_name or '-'}（{sel_tx.payer_account_id or '-'}）"),
+                ("收款方", f"{sel_tx.payee_name or '-'}（{sel_tx.payee_account_id or '-'}）"),
+                ("核对规则", _rules_to_chinese(sel_candidate.matched_rules) if sel_candidate else "-"),
+                ("风险提示", _risks_to_chinese(sel_candidate.risk_codes) if sel_candidate else "-"),
+                ("原始证据定位", _source_locator_label(sel_tx)),
+                ("当前处置", str(sel_row.get("处置决断") or "-")),
+                ("认定理由", str(sel_row.get("认定理由") or "-")),
+            ])
+        _render_case_query(
+            result, claim_id=claim.id,
+            transaction_id=sel_tx.id if picked_index >= 0 else None,
+            key="review_query",
+        )
 
     st.caption("普通候选的完整字段、处置选择和原始行号统一保留在上方审查表；需要深查时按 P 编号回到对应行。")
     # 编辑结果在本轮渲染即可见，签署前的“完成前检查”直接用它实时统计。
@@ -2931,7 +3016,11 @@ def evidence_graph_page(result) -> None:
     last_selection = st.session_state.get(sel_state_key)
     if last_selection:
         payload["selected"] = last_selection
-    state = render_evidence_graph(payload, height=560, key="evidence_graph_main")
+
+    # 左图右 Inspector：点击节点/关系后，来源回溯固定在右侧栏，不用滚屏。
+    col_graph, col_inspector = st.columns([2.2, 1])
+    with col_graph:
+        state = render_evidence_graph(payload, height=560, key="evidence_graph_main")
 
     selection = None
     if state is not None:
@@ -2943,46 +3032,58 @@ def evidence_graph_page(result) -> None:
     )
     if current_selection != last_selection:
         st.session_state[sel_state_key] = current_selection
-    if not selection:
-        st.caption("点击图中人物、账户、主张或材料节点可回溯来源；滚轮缩放、拖拽平移。")
-        return
 
-    lookup: dict[tuple[str, str], dict] = {}
-    for node in payload.get("nodes", []):
-        lookup[("node", node.get("id"))] = node
-    for edge in payload.get("edges", []):
-        lookup[("edge", edge.get("id"))] = edge
-    entry = lookup.get((selection.get("type"), selection.get("id"))) or selection
+    with col_inspector:
+        if not selection:
+            st.caption("点击图中人物、账户、主张或关系线，此处显示其来源回溯；滚轮缩放、拖拽平移。")
+            _render_case_query(result, key="graph_query")
+            return
 
-    def _ref_text(ref: dict) -> str:
-        return " · ".join(f"{k}={v}" for k, v in ref.items() if v not in (None, "", []))
+        lookup: dict[tuple[str, str], dict] = {}
+        for node in payload.get("nodes", []):
+            lookup[("node", node.get("id"))] = node
+        for edge in payload.get("edges", []):
+            lookup[("edge", edge.get("id"))] = edge
+        entry = lookup.get((selection.get("type"), selection.get("id"))) or selection
 
-    if selection.get("type") == "node":
-        items = [
-            ("节点类型", entry.get("role_label") or entry.get("type", "-")),
-            ("脱敏账号", entry.get("masked_account") or "-"),
-            ("主张金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
-        ]
-        refs = entry.get("source_refs") or []
-        for idx, ref in enumerate(refs[:8], 1):
-            items.append((f"来源 {idx:02d}", _ref_text(ref)))
-        if len(refs) > 8:
-            items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
-        _evidence_card(f"节点 · {entry.get('label') or entry.get('name', '-')}", items)
-    else:
-        items = [
-            ("关系类型", entry.get("type", "-")),
-            ("关系性质", "! 待证/争议（不构成确定事实）" if entry.get("disputed") else "✓ 由确定性记录直接得出"),
-            ("累计金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
-            ("流水笔数", f"{entry.get('count', 1)} 笔"),
-            ("说明", entry.get("reason") or "-"),
-        ]
-        refs = entry.get("source_refs") or []
-        for idx, ref in enumerate(refs[:8], 1):
-            items.append((f"来源 {idx:02d}", _ref_text(ref)))
-        if len(refs) > 8:
-            items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
-        _evidence_card("关系 · 待人工核验" if entry.get("disputed") else "关系 · 记录确认", items)
+        def _ref_text(ref: dict) -> str:
+            return " · ".join(f"{k}={v}" for k, v in ref.items() if v not in (None, "", []))
+
+        if selection.get("type") == "node":
+            items = [
+                ("节点类型", entry.get("role_label") or entry.get("type", "-")),
+                ("脱敏账号", entry.get("masked_account") or "-"),
+                ("主张金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
+            ]
+            refs = entry.get("source_refs") or []
+            for idx, ref in enumerate(refs[:8], 1):
+                items.append((f"来源 {idx:02d}", _ref_text(ref)))
+            if len(refs) > 8:
+                items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
+            _evidence_card(f"节点 · {entry.get('label') or entry.get('name', '-')}", items)
+        else:
+            items = [
+                ("关系类型", entry.get("type", "-")),
+                ("关系性质", "! 待证/争议（不构成确定事实）" if entry.get("disputed") else "✓ 由确定性记录直接得出"),
+                ("累计金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
+                ("流水笔数", f"{entry.get('count', 1)} 笔"),
+                ("说明", entry.get("reason") or "-"),
+            ]
+            refs = entry.get("source_refs") or []
+            for idx, ref in enumerate(refs[:8], 1):
+                items.append((f"来源 {idx:02d}", _ref_text(ref)))
+            if len(refs) > 8:
+                items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
+            _evidence_card("关系 · 待人工核验" if entry.get("disputed") else "关系 · 记录确认", items)
+        query_refs = entry.get("source_refs") or []
+        selected_claim_id = next((ref.get("claim_id") for ref in query_refs if ref.get("claim_id")), None)
+        selected_tx_ids = {ref["transaction_id"] for ref in query_refs if ref.get("transaction_id")}
+        selected_tx_id = next(iter(selected_tx_ids)) if len(selected_tx_ids) == 1 else None
+        _render_case_query(
+            result, claim_id=selected_claim_id, transaction_id=selected_tx_id,
+            entity=entry.get("name") if selection.get("type") == "node" else None,
+            key="graph_query",
+        )
 
 
 def audit_page(result) -> None:
@@ -3202,36 +3303,6 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-with st.sidebar.expander("模型与规则配置", expanded=False):
-    # URL overrides let a demo link or an automated check open the workbench already
-    # configured, e.g. ?case_id=CASE-0001&provider=deepseek&enhance=1
-    requested_provider = st.query_params.get("provider")
-    if requested_provider in PROVIDER_CHOICES:
-        st.session_state.setdefault("provider_name", requested_provider)
-    if str(st.query_params.get("enhance", "")).strip().lower() in {"1", "true", "yes"}:
-        st.session_state.setdefault("model_enhancement_enabled", True)
-
-    provider_name = st.selectbox(
-        "模型服务",
-        PROVIDER_CHOICES,
-        key="provider_name",
-        format_func=_provider_label,
-        help="Mock 不联网；DeepSeek 负责事实主张提取，金额穿透与审查状态始终由确定性规则完成。"
-    )
-    enable_claim_audit = st.checkbox(
-        "启用漏提复核",
-        value=False,
-        help="对同一份起诉书做第二次对抗式提取。疑似漏项只作为待人工确认事项，不会自动并入资金复核。",
-    )
-    model_enhancement = st.checkbox(
-        "启用模型增强",
-        key="model_enhancement_enabled",
-        help=(
-            "让模型为冲突比对补充材料引文、为回查建议改写措辞、生成全案摘要。"
-            "数字一律由确定性代码提供，模型不得新增；结果按内容缓存，同一案件不会重复计费。"
-        ),
-    )
-
 PAGES = [
     "01  案件审查概览",
     "02  涉案资金流水",
@@ -3240,7 +3311,7 @@ PAGES = [
     "05  案件关系图",
 ]
 
-# 侧边栏案件操作与导航分区：新建案件不再与历史案件切换共用一个按钮。
+# 侧边栏信息层级：当前案件 → 工作区导航（主角）→ 案件管理 → 设置（沉底）。
 sidebar_result = st.session_state.get("result")
 case_display_names = _load_case_display_names()
 sidebar_notice = st.session_state.pop("sidebar_notice", None)
@@ -3261,6 +3332,8 @@ else:
     active_case_id = sidebar_result.claim.case_id
     active_display = case_display_names.get(active_case_id)
     st.sidebar.caption(f"案件：{active_display}（{active_case_id}）" if active_display else f"案件编号：{active_case_id}")
+    if signed:
+        st.sidebar.caption(f"底稿版本 v{st.session_state.decision.version}")
     with st.sidebar.popover("重命名当前案件", use_container_width=True):
         new_name = st.text_input(
             "案件显示名（仅展示用途，案件编号不变）",
@@ -3273,7 +3346,27 @@ else:
                     active_case_id, new_name.strip() or active_case_id
                 )
             st.rerun()
-st.sidebar.markdown('<div class="section-kicker sidebar-operation-heading">案件操作</div>', unsafe_allow_html=True)
+
+st.sidebar.markdown('<div class="section-kicker sidebar-operation-heading">工作区导航</div>', unsafe_allow_html=True)
+# Use explicit buttons rather than a visually collapsed radio control. Each
+# button writes the target page before rerunning, so a click has an immediate,
+# inspectable destination even when the current page contains a large editor.
+# 当前页用 primary 渲染，再由 CSS 压平为“左侧藏青竖条”选中态，不再叠加字符标记。
+if st.session_state.get("nav_page") not in PAGES:
+    st.session_state["nav_page"] = PAGES[0]
+page_selection = st.session_state["nav_page"]
+for nav_index, nav_label in enumerate(PAGES, 1):
+    if st.sidebar.button(
+        nav_label,
+        key=f"sidebar_nav_{nav_index}",
+        use_container_width=True,
+        type="primary" if page_selection == nav_label else "secondary",
+    ):
+        st.session_state["nav_page"] = nav_label
+        st.rerun()
+
+st.sidebar.divider()
+st.sidebar.markdown('<div class="section-kicker sidebar-operation-heading">案件管理</div>', unsafe_allow_html=True)
 if st.sidebar.button("新建案件", use_container_width=True, key="sidebar_new_case"):
     # New means a clean workbench, not merely jumping to the old materials
     # panel. Persisted SQLite checkpoints remain untouched until the user
@@ -3299,7 +3392,6 @@ if _history_db.exists():
 else:
     history_cases = []
 if history_cases:
-    st.sidebar.markdown('<div class="section-kicker sidebar-operation-heading">历史案件</div>', unsafe_allow_html=True)
     switch_options = {
         (
             f"{case_display_names[c['case_id']]}（{c['case_id']}）"
@@ -3308,8 +3400,8 @@ if history_cases:
         ): c["case_id"]
         for c in history_cases
     }
-    selected_label = st.sidebar.selectbox("选择要打开的案件", list(switch_options.keys()), key="sidebar_history_case")
-    if st.sidebar.button("打开历史案件", use_container_width=True, key="sidebar_load_case"):
+    selected_label = st.sidebar.selectbox("打开历史案件", list(switch_options.keys()), key="sidebar_history_case")
+    if st.sidebar.button("打开所选案件", use_container_width=True, key="sidebar_load_case"):
         target_case_id = switch_options[selected_label]
         if _restore_case_into_session(_history_db, target_case_id):
             st.session_state["nav_page"] = PAGES[0]
@@ -3343,40 +3435,40 @@ if history_cases:
 else:
     st.sidebar.caption("暂无已保存的历史案件。")
 
-st.sidebar.markdown('<div class="section-kicker sidebar-operation-heading">工作区导航</div>', unsafe_allow_html=True)
-# Use explicit buttons rather than a visually collapsed radio control. Each
-# button writes the target page before rerunning, so a click has an immediate,
-# inspectable destination even when the current page contains a large editor.
-if st.session_state.get("nav_page") not in PAGES:
-    st.session_state["nav_page"] = PAGES[0]
-page_selection = st.session_state["nav_page"]
-for nav_index, nav_label in enumerate(PAGES, 1):
-    nav_text = f"▌  {nav_label}" if page_selection == nav_label else nav_label
-    if st.sidebar.button(
-        nav_text,
-        key=f"sidebar_nav_{nav_index}",
-        use_container_width=True,
-        type="secondary",
-    ):
-        st.session_state["nav_page"] = nav_label
-        st.rerun()
-    if page_selection == nav_label:
-        st.sidebar.caption(f"当前定位：{nav_label}")
 st.sidebar.divider()
+# 设置沉底：办案人员打开系统不应首先面对模型配置。
+with st.sidebar.expander("⚙ 模型与规则配置", expanded=False):
+    # URL overrides let a demo link or an automated check open the workbench already
+    # configured, e.g. ?case_id=CASE-0001&provider=deepseek&enhance=1
+    requested_provider = st.query_params.get("provider")
+    if requested_provider in PROVIDER_CHOICES:
+        st.session_state.setdefault("provider_name", requested_provider)
+    if str(st.query_params.get("enhance", "")).strip().lower() in {"1", "true", "yes"}:
+        st.session_state.setdefault("model_enhancement_enabled", True)
 
-result = st.session_state.get("result")
-st.sidebar.markdown('<div class="section-kicker" style="margin-top:8px;">案件任务状态</div>', unsafe_allow_html=True)
-if result is None:
-    st.sidebar.markdown('<span class="accessible-status status-insufficient"><span class="status-symbol">—</span> 等待载入材料</span>', unsafe_allow_html=True)
-elif "decision" in st.session_state:
-    st.sidebar.markdown('<span class="accessible-status status-ok"><span class="status-symbol">✓</span> 复核已签署完成</span>', unsafe_allow_html=True)
-    st.sidebar.caption(f"案件：{result.claim.case_id} (v{st.session_state.decision.version})")
-else:
-    st.sidebar.markdown('<span class="accessible-status status-pending"><span class="status-symbol">◌</span> 等待人工复核</span>', unsafe_allow_html=True)
-    st.sidebar.caption(f"案件：{result.claim.case_id}")
+    provider_name = st.selectbox(
+        "模型服务",
+        PROVIDER_CHOICES,
+        key="provider_name",
+        format_func=_provider_label,
+        help="Mock 不联网；DeepSeek 负责事实主张提取，金额穿透与审查状态始终由确定性规则完成。"
+    )
+    enable_claim_audit = st.checkbox(
+        "启用漏提复核",
+        value=False,
+        help="对同一份起诉书做第二次对抗式提取。疑似漏项只作为待人工确认事项，不会自动并入资金复核。",
+    )
+    model_enhancement = st.checkbox(
+        "启用模型增强",
+        key="model_enhancement_enabled",
+        help=(
+            "让模型为冲突比对补充材料引文、为回查建议改写措辞、生成全案摘要。"
+            "数字一律由确定性代码提供，模型不得新增；结果按内容缓存，同一案件不会重复计费。"
+        ),
+    )
 
-if result is not None:
-    claim_events = [e for e in getattr(result, "audit_events", []) if getattr(e, "step", None) == "claim_extraction"]
+if sidebar_result is not None:
+    claim_events = [e for e in getattr(sidebar_result, "audit_events", []) if getattr(e, "step", None) == "claim_extraction"]
     if claim_events and getattr(claim_events[-1], "input_tokens", None) is not None and claim_events[-1].input_tokens > 0:
         ce = claim_events[-1]
         with st.sidebar.expander("大模型诊断指标", expanded=False):
@@ -3386,14 +3478,14 @@ if result is not None:
 
 if page_selection.startswith("01"):
     case_page()
-elif result is None:
+elif sidebar_result is None:
     render_section_heading("页面 / 空", "请先加载案卷材料", "当前工作区需要有效案件数据")
     st.warning("— 当前没有可用审查任务。请前往【01  案件审查概览】载入案卷或上传材料。")
 elif page_selection.startswith("02"):
-    transactions_page(result)
+    transactions_page(sidebar_result)
 elif page_selection.startswith("03"):
-    review_page(result)
+    review_page(sidebar_result)
 elif page_selection.startswith("05"):
-    evidence_graph_page(result)
+    evidence_graph_page(sidebar_result)
 else:
-    audit_page(result)
+    audit_page(sidebar_result)

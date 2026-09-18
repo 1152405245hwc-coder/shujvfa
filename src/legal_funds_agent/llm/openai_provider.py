@@ -9,6 +9,7 @@ from time import perf_counter
 from typing import Any, Callable
 
 from legal_funds_agent.llm.schemas import (
+    SCHEMA_CASE_QUERY_PLAN,
     SCHEMA_CLAIM_AUDIT,
     SCHEMA_EVIDENCE_CONFLICT,
     SCHEMA_INVESTIGATION_NOTE,
@@ -206,9 +207,17 @@ JSON_SCHEMAS: dict[str, dict[str, Any]] = {
     SCHEMA_INVESTIGATION_NOTE: INVESTIGATION_NOTE_SCHEMA,
 }
 
+# The query-plan contract carries a free-form ``arguments`` object, which OpenAI's
+# strict JSON schema mode cannot express (strict mode needs every property declared in
+# ``required`` and ``additionalProperties: false``). Rather than declare support and
+# then fail at call time, the provider says up front that it cannot do this one:
+# natural-language planning runs on providers with a JSON-object mode (DeepSeek), and
+# OpenAI users keep the deterministic shortcut queries. See ``supports_schema``.
+UNSUPPORTED_SCHEMAS = (SCHEMA_CASE_QUERY_PLAN,)
+
 
 class OpenAIProvider:
-    supported_schemas = tuple(SCHEMAS)
+    supported_schemas = tuple(name for name in SCHEMAS if name not in UNSUPPORTED_SCHEMAS)
 
     def __init__(self, *, api_key: str, model: str,
                  base_url: str = "https://api.openai.com/v1",
@@ -225,6 +234,8 @@ class OpenAIProvider:
 
     def generate_structured(self, *, text: str, schema_name: str) -> list[dict[str, Any]]:
         spec = get_schema(schema_name)
+        if schema_name not in JSON_SCHEMAS:
+            raise ValueError(f"OpenAI provider cannot express schema in strict JSON mode: {schema_name}")
         json_schema = JSON_SCHEMAS[schema_name]
         payload = json.dumps({
             "model": self.model,

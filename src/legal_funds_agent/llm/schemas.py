@@ -30,6 +30,7 @@ SCHEMA_PARTY_ALIAS = "party_alias_v0.1"
 SCHEMA_EVIDENCE_CONFLICT = "evidence_conflict_v0.1"
 SCHEMA_INVESTIGATION_NOTE = "investigation_note_v0.1"
 SCHEMA_CASE_NARRATIVE = "case_narrative_v0.1"
+SCHEMA_CASE_QUERY_PLAN = "case_query_plan_v0.1"
 
 
 # NOTE: this string is byte-identical to the prompt committed with the frozen V0.1
@@ -127,6 +128,23 @@ CASE_NARRATIVE_PROMPT = """你是刑事案件资金证据审查底稿的叙述�
 
 返回严格 JSON 对象，格式为
 {"sections":[{"heading":"","body":""}]}。"""
+
+
+CASE_QUERY_PLAN_PROMPT = """你是涉案资金证据审查系统的只读查询规划器。输入是一个 JSON 对象，包含
+"case_id"（当前案件编号）、"claims"（当前案件的涉案事实主张，仅含编号、当事人与时间）、
+"question"（审查人员的问题）与 "tools"（当前可用的只读查询工具及其参数说明）。
+
+请把问题拆成**最多 4 个只读查询步骤**，用于取回回答该问题所需的事实。严格约束：
+
+- 只能使用 "tools" 中列出的工具名，不得发明工具，不得调用任何写操作；
+- 每个步骤的 arguments 必须是 JSON 对象，且只包含该工具参数说明中列出的字段；
+- 不得查询其他案件，不得访问文件系统、数据库、代码仓库或外部网络；
+- 步骤按顺序执行一次，不得出现循环，不得重复完全相同的工具与参数；
+- **只规划查询，不要输出任何结论、金额加总、单位换算或法律判断。**
+
+返回严格 JSON 对象，格式为 {"plan":[{"tool_name":"","arguments":{}}]}。
+若问题无法用现有工具回答（与本案无关、需要外部信息、或需要语义推断），
+必须返回 {"plan":[]}，不要用相近的工具勉强拼凑。"""
 
 
 def _clean_amount(value: Any) -> str:    return str(value if value not in (None, "") else "0.00").replace(",", "").strip()
@@ -320,6 +338,48 @@ def build_case_narrative_input(facts: dict[str, Any]) -> str:
     return json.dumps({"facts": facts}, ensure_ascii=False)
 
 
+def normalize_case_query_plan(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize a read-only query plan into ``[{tool_name, arguments}]``.
+
+    Deliberately does **not** decide whether a tool exists or is allowed — that depends
+    on the live tool catalog and the case context, so it belongs to the orchestrator,
+    not to a provider-agnostic normalizer. A malformed step is an error rather than a
+    silent skip: dropping it would quietly turn "query the wrong thing" into "answered
+    a narrower question".
+    """
+    plan = payload.get("plan")
+    if not isinstance(plan, list):
+        raise ValueError("plan must be a list")
+    normalized: list[dict[str, Any]] = []
+    for step in plan:
+        if not isinstance(step, dict):
+            continue
+        tool_name = str(step.get("tool_name") or "").strip()
+        if not tool_name:
+            continue
+        arguments = step.get("arguments", {})
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            raise ValueError("plan step arguments must be an object")
+        normalized.append({"tool_name": tool_name, "arguments": arguments})
+    return normalized
+
+
+def build_case_query_input(case_id: str, claims: list[dict[str, Any]], question: str,
+                           tools: list[dict[str, Any]]) -> str:
+    """Pack the plan request into the single ``text`` channel.
+
+    ``claims`` carries identity/time only, and ``tools`` is the catalog — the full
+    transaction ledger is never sent, so the planner cannot base a plan on the case
+    file itself.
+    """
+    return json.dumps(
+        {"case_id": case_id, "claims": claims, "question": question, "tools": tools},
+        ensure_ascii=False,
+    )
+
+
 @dataclass(frozen=True)
 class SchemaSpec:
     name: str
@@ -370,6 +430,12 @@ SCHEMAS: dict[str, SchemaSpec] = {
         system_prompt=CASE_NARRATIVE_PROMPT,
         payload_key="sections",
         normalizer=normalize_narrative_sections,
+    ),
+    SCHEMA_CASE_QUERY_PLAN: SchemaSpec(
+        name=SCHEMA_CASE_QUERY_PLAN,
+        system_prompt=CASE_QUERY_PLAN_PROMPT,
+        payload_key="plan",
+        normalizer=normalize_case_query_plan,
     ),
 }
 

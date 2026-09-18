@@ -35,7 +35,6 @@ COPY sample_data ./sample_data
 COPY tests ./tests
 COPY tools ./tools
 COPY docs ./docs
-COPY .streamlit ./.streamlit
 
 EXPOSE 8501
 
@@ -48,4 +47,5 @@ CMD ["python", "-m", "streamlit", "run", "ui/streamlit_app.py", \
      "--server.headless=true", \
      "--server.fileWatcherType=none", \
      "--browser.gatherUsageStats=false", \
+     "--client.toolbarMode=minimal", \
      "--server.maxUploadSize=200"]

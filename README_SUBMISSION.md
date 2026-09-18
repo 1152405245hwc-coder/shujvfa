@@ -2,7 +2,7 @@
 
 ## 一句话
 
-本仓库为**单容器**交付：只需 `docker build` + `docker run`，无需安装 Python、uv 或任何其他环境，无需 Docker Compose。
+本仓库为**单容器**交付：只需 `docker build` + `docker run`。除 Docker 运行环境外，无需另行安装 Python、uv 或其他项目依赖，无需 Docker Compose。
 
 ## 构建与运行
 
@@ -22,6 +22,20 @@ http://localhost:8501
 ```
 
 容器健康检查地址：`http://localhost:8501/healthz`（Docker HEALTHCHECK 已内置）。
+
+### 可选：保留历史案件的持久化运行
+
+默认命令使用 `--rm`，容器停止后其中保存的历史案件记录随之清除，单次评审体验无需关心。
+如需在多次容器运行之间保留「历史案件 / 审查进度」（案件记录存储于容器内 SQLite `/app/data/cases.db`），可挂载数据卷：
+
+```bash
+docker run --rm \
+  -p 8501:8501 \
+  -v legal-funds-data:/app/data \
+  legal-funds-agent
+```
+
+此后容器删除再重跑，历史案件仍在。默认评审流程不依赖此选项。
 
 ## 架构形态
 
