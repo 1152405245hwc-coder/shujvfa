@@ -25,6 +25,22 @@
   background: #f8fafc;
 }
 
+/* 点击节点触发 Streamlit state 回传时，组件可能短暂重建；全屏态必须一直有不透明底色，避免透出后面的整个主页面。 */
+.ff-root.ff-expanded::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #f8fafc;
+  z-index: 0;
+}
+
+.ff-root.ff-expanded .ff-canvas,
+.ff-root.ff-expanded .ff-toolbar,
+.ff-root.ff-expanded .ff-legend,
+.ff-root.ff-expanded .ff-tooltip {
+  z-index: 1;
+}
+
 .ff-canvas {
   position: absolute;
   inset: 0;

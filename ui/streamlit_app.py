@@ -52,11 +52,25 @@ from legal_funds_agent.workflow.vertical_slice import (
     confirm_claim_extraction,
     review_transactions,
     run_case_inputs,
-    run_demo_case,
 )
 
 
 st.set_page_config(page_title="资金链证审", page_icon=None, layout="wide", initial_sidebar_state="expanded")
+
+PAGE_GUIDE = "00  案件导读（评审）"
+PAGE_OVERVIEW = "01  案件审查概览"
+PAGE_TRANSACTIONS = "02  涉案资金流水"
+PAGE_REVIEW = "03  资金证据核验"
+PAGE_AUDIT = "04  审查底稿留痕"
+PAGE_GRAPH = "05  案件关系图"
+PAGES = [
+    PAGE_GUIDE,
+    PAGE_OVERVIEW,
+    PAGE_TRANSACTIONS,
+    PAGE_REVIEW,
+    PAGE_AUDIT,
+    PAGE_GRAPH,
+]
 st.markdown("""
 <style>
 :root {
@@ -965,10 +979,6 @@ def _load_case_display_names() -> dict[str, str]:
         return Repository(connection).load_case_display_names()
 
 
-def _load_demo(provider):
-    return run_demo_case(ROOT / "sample_data" / "demo_case_001", provider=provider)
-
-
 def _persist_result(result, *, audit_events=None) -> Path:
     data_dir = ROOT / "data"
     data_dir.mkdir(exist_ok=True)
@@ -1166,71 +1176,10 @@ def _render_fund_flow(graph, *, height: int = 430, key: str | None = None, trans
     from components.fund_flow import render_fund_flow, topology_to_payload
 
     payload = topology_to_payload(graph, transactions=transactions, disputed_names=disputed_names)
-    # The component keeps its own selection across reruns, so the echo is only
-    # a rebuild aid: when Streamlit does remount the subtree (tab switch,
-    # changed data) the highlight is re-applied from this value. It must NOT
-    # trigger a second rerun on every tap — the script re-execution is what
-    # made the page flash and dropped the graph back to a refitted view.
-    sel_state_key = f"{key}__selection_echo"
-    last_selection = st.session_state.get(sel_state_key)
-    if last_selection:
-        payload["selected"] = last_selection
-    state = render_fund_flow(payload, height=height, key=key)
-
-    selection = None
-    if state is not None:
-        selection = getattr(state, "selection", None)
-        if selection is None and isinstance(state, dict):
-            selection = state.get("selection")
-    current_selection = (
-        {"type": selection.get("type"), "id": selection.get("id")} if selection else None
-    )
-    if current_selection != last_selection:
-        st.session_state[sel_state_key] = current_selection
-    if not selection:
-        st.caption("点击图中账户或资金连线可查看来源明细；滚轮缩放、拖拽平移。")
-        return
-
-    if selection.get("type") == "node":
-        role_cn = {
-            "victim": "被害人 / 资金来源",
-            "suspect": "涉案一级账户",
-            "third_party_disputed": "! 第三方争议账户",
-            "downstream": "后续流向账户",
-        }.get(selection.get("display_role"), "其他账户")
-        _evidence_card(
-            f"账户 · {selection.get('name', '-')}",
-            [
-                ("账户性质", role_cn),
-                ("脱敏账号", selection.get("masked_account") or "-"),
-                ("累计流入", selection.get("total_in_full", "-")),
-                ("累计流出", selection.get("total_out_full", "-")),
-            ],
-        )
-    elif selection.get("type") == "edge":
-        date_min, date_max = selection.get("date_min", ""), selection.get("date_max", "")
-        dates = date_min if date_min == date_max else f"{date_min} ~ {date_max}"
-        reason = selection.get("reason") or ""
-        source_refs = selection.get("source_refs") or []
-        items = [
-            ("交易笔数", f"{selection.get('count', 0)} 笔"),
-            ("处置状态", selection.get("disposition_label", "-")),
-            ("日期范围", dates or "-"),
-            ("说明", REASON_TO_CN.get(reason, reason) or "-"),
-        ]
-        for idx, ref in enumerate(source_refs[:8], 1):
-            locator_parts = [p for p in (ref.get("evidence_id"), ref.get("account_id")) if p]
-            locator = " / ".join(locator_parts)
-            row = ref.get("source_row")
-            if row:
-                locator = f"{locator} · 第{row}行" if locator else f"第{row}行"
-            items.append((f"来源记录 {idx:02d}", f"{ref.get('transaction_id', '-')}" + (f" · {locator}" if locator else "")))
-        if len(source_refs) > 8:
-            items.append(("…", f"另有 {len(source_refs) - 8} 笔来源记录"))
-        _evidence_card(
-            f"资金往来 · {selection.get('amount_full', '-')}",
-            items,
-        )
+    # 图上点选/聚焦是纯前端审查视图状态，不回传 Streamlit。否则每次点击都会
+    # 触发脚本 rerun，组件在 rerun 帧中短暂重建，全屏时会闪出背后的整页内容。
+    render_fund_flow(payload, height=height, key=key)
+    st.caption("点击图中账户或资金连线可查看来源明细；滚轮缩放、拖拽平移。")
 
 
 def _save_confirmed_claim(database_path: Path, claim) -> None:
@@ -1890,6 +1839,71 @@ def _apply_checklist_statuses(case_id: str, items: list[dict]) -> list[dict]:
     return updated
 
 
+def _run_gold_case(*, provider_name: str, enable_claim_audit: bool, persist_locally: bool = False) -> bool:
+    """Load and run the complex showcase case in one step."""
+    st.query_params.pop("case_id", None)
+    try:
+        with st.status("正在加载实战评测卷宗并执行穿透核验...", expanded=True) as status:
+            pkg = ROOT / "sample_data" / "case_packages" / "GOLD_CASE_001"
+            indictment_bytes = (pkg / "visible" / "documents" / "01_起诉书.docx").read_bytes()
+            statement_bytes = (pkg / "visible" / "documents" / "05_被害人陈述.docx").read_bytes()
+            st.write("1. 解析 DOCX 起诉书全文...")
+            indictment_text = extract_document_text(indictment_bytes, filename="01_起诉书.docx")
+            st.write("2. 解析 DOCX 被害人询问笔录...")
+            statement_text = extract_document_text(statement_bytes, filename="05_被害人陈述.docx")
+            supplementary_records = []
+            for filename, label in (("03_证人证言.docx", "证人证言"), ("04_被告人供述与辩解.docx", "被告人供述与辩解")):
+                st.write(f"2.{len(supplementary_records) + 1} 登记 {label}...")
+                supplement_path = pkg / "visible" / "documents" / filename
+                supplementary_records.append({
+                    "filename": filename,
+                    "text": extract_document_text(supplement_path.read_bytes(), filename=filename),
+                })
+            st.write("3. 直接解析原始 Excel 银行流水并规范化...")
+            xlsx_bytes = (pkg / "visible" / "bank" / "02_银行流水账单.xlsx").read_bytes()
+            csv_text, csv_skip_stats = extract_transactions_csv_detailed(xlsx_bytes, filename="02_银行流水账单.xlsx")
+            total_skipped = sum(csv_skip_stats.values())
+            if total_skipped > 0:
+                st.warning(
+                    f"银行流水有 {total_skipped} 行未导入："
+                    f"方向无法识别 {csv_skip_stats.get('invalid_direction', 0)} 行、"
+                    f"日期无法解析 {csv_skip_stats.get('invalid_datetime', 0)} 行、"
+                    f"金额或对手方缺失 {csv_skip_stats.get('invalid_amount_or_counterparty', 0)} 行，"
+                    f"请核对原始文件。"
+                )
+
+            st.write("4. 运行事实主张抽取与确定性资金穿透对账引擎...")
+            provider = provider_from_environment(provider_name)
+            result = run_case_inputs(
+                indictment_text=indictment_text,
+                statement_text=statement_text,
+                csv_text=csv_text,
+                case_id="GOLD_CASE_001",
+                task_id="TASK-GOLD-001",
+                provider=provider,
+                allow_multiple_claims=True,
+                statement_provider=provider,
+                enable_claim_audit=enable_claim_audit,
+                audit_provider=provider,
+                allow_missing_statement=True,
+                transaction_evidence_id="EVI-BANK-XLSX",
+            )
+            status.update(label=f"实战评测案例审查完成：召回 {len(result.candidates)}/{len(result.transactions)} 笔流水，总额 ¥{result.claim.claimed_amount:,.2f}", state="complete")
+        st.session_state.result = result
+        st.session_state.supplementary_documents = supplementary_records
+        st.session_state.repository_path = _persist_result(result) if persist_locally else None
+        st.session_state.pop("decision", None)
+        st.session_state.pop("report", None)
+        st.session_state.pop("failed_audit_events", None)
+        st.session_state.pop("landing_panel", None)
+        st.success("实战评测案卷加载完毕！请前往【证据与资金流水】或【资金证据核验】完成全案复核。")
+        return True
+    except Exception as exc:
+        st.session_state.failed_audit_events = getattr(exc, "audit_events", [])
+        st.error(f"实战案卷处理失败：{exc}")
+        return False
+
+
 def _landing_page() -> None:
     """无案件首页：不是任何具体案件的 Masthead，只提供入口与最近案件。"""
     st.markdown(
@@ -1958,26 +1972,27 @@ def _landing_page() -> None:
             st.markdown("**新建案件**")
             st.caption("上传起诉书、被害人陈述、银行流水等材料，建立全新审查工作区。")
             if st.button("上传案卷材料", key="landing_new", use_container_width=True):
+                st.query_params.pop("case_id", None)
                 st.session_state["material_source"] = "上传材料"
                 st.session_state["landing_panel"] = True
+                st.session_state["scroll_to_materials_intake"] = True
                 st.rerun()
     with col_demo:
         with st.container(border=True):
             st.markdown("**打开演示案件**")
-            st.caption("演示案例为完全虚构的快速演示；实战评测案例为 736.8 万评测卷宗。")
-            if st.button("打开演示案例", key="landing_demo_d01", use_container_width=True):
-                st.session_state["material_source"] = "演示案例"
-                st.session_state["landing_panel"] = True
-                st.rerun()
-            if st.button("实战评测案例（736.8万）", key="landing_demo_gold", use_container_width=True):
-                st.session_state["material_source"] = "实战评测案例（736.8万）"
-                st.session_state["landing_panel"] = True
-                st.rerun()
+            st.caption("内置 736.8 万虚构评测卷宗，一键加载完整案卷并直接进入审查工作台。")
+            if st.button("打开演示案件（736.8万）", key="landing_demo_gold", use_container_width=True):
+                st.session_state.pop("landing_panel", None)
+                st.session_state.pop("material_source", None)
+                if _run_gold_case(provider_name=provider_name, enable_claim_audit=enable_claim_audit):
+                    st.session_state["nav_page"] = PAGE_GUIDE
+                    st.rerun()
     with col_history:
         with st.container(border=True):
             st.markdown("**打开历史案件**")
             st.caption("调阅本机 SQLite 中保存的脱敏案件快照与复核进度。")
             if st.button("调阅历史案件", key="landing_history", use_container_width=True, disabled=not recent_cases):
+                st.query_params.pop("case_id", None)
                 st.session_state["material_source"] = "打开历史案件"
                 st.session_state["landing_panel"] = True
                 st.rerun()
@@ -2005,43 +2020,38 @@ def case_page() -> None:
 
 
 def _materials_panel(active_case_id: str) -> None:
+    st.markdown('<div id="materials-intake-anchor" style="scroll-margin-top:88px;"></div>', unsafe_allow_html=True)
+    if st.session_state.pop("scroll_to_materials_intake", False):
+        components_v1.html(
+            """
+            <script>
+            (function() {
+              try {
+                var target = window.parent.document.getElementById('materials-intake-anchor');
+                if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
+              } catch (err) { /* iframe access is best-effort only */ }
+            })();
+            </script>
+            """,
+            height=0,
+        )
     database_path = ROOT / "data" / "cases.db"
     suggested_case_id = _next_available_case_id(database_path, base=active_case_id)
     if suggested_case_id != active_case_id:
         st.info(f"案件编号 {active_case_id} 已存在历史案件记录，已为您分配新案件编号 {suggested_case_id}。")
     case_id = st.text_input("案件编号", value=suggested_case_id)
     persist_locally = st.checkbox("保存脱敏后的本地案件记录", value=False, help="默认不保存上传材料；启用后仅写入本机 SQLite。")
-    source_default = "实战评测案例（736.8万）" if active_case_id == "GOLD_CASE_001" else "演示案例"
+    source_default = "实战评测案例（736.8万）" if active_case_id == "GOLD_CASE_001" else "上传材料"
     if active_case_id not in {"CASE-0001"} and active_case_id != "GOLD_CASE_001":
         source_default = "打开历史案件"
-    source_options = ["演示案例", "实战评测案例（736.8万）", "上传材料", "打开历史案件"]
+    source_options = ["实战评测案例（736.8万）", "上传材料", "打开历史案件"]
+    if st.session_state.get("material_source") == "演示案例":
+        st.session_state["material_source"] = "实战评测案例（736.8万）"
     if "material_source" in st.session_state:
         source = st.segmented_control("材料来源", source_options, key="material_source")
     else:
         source = st.segmented_control("材料来源", source_options, default=source_default, key="material_source")
-    if source == "演示案例":
-        st.caption("使用完全虚构的演示案例：指控50,000元，流水对应30,000元。")
-        run_clicked = st.button("运行演示审查", type="primary", width="content")
-        if run_clicked:
-            st.query_params.pop("case_id", None)
-            try:
-                with st.status("正在执行审查工作流", expanded=True) as status:
-                    result = _load_demo(provider_from_environment(provider_name))
-                    st.write("起诉书事实主张提取完成")
-                    st.write("被害人陈述交叉核对完成")
-                    st.write(f"银行流水解析完成：{len(result.transactions)} 笔")
-                    st.write(f"候选交易召回完成：{len(result.candidates)} 笔")
-                    status.update(label="审查任务等待人工复核", state="complete")
-                st.session_state.result = result
-                st.session_state.supplementary_documents = []
-                st.session_state.repository_path = _persist_result(result) if persist_locally else None
-                st.session_state.pop("decision", None)
-                st.session_state.pop("report", None)
-                st.session_state.pop("failed_audit_events", None)
-            except Exception as exc:
-                st.session_state.failed_audit_events = getattr(exc, "audit_events", [])
-                st.error(f"审查工作流失败：{exc}")
-    elif source == "实战评测案例（736.8万）":
+    if source == "实战评测案例（736.8万）":
         st.caption("载入高难度评测案卷：涉案总额 7,368,000 元，直接读取原始 Excel 多账户流水（招行/工行/证券）及第三方代收（林某 A005）。")
         col_g1, col_g2 = st.columns([1, 3])
         with col_g1:
@@ -2049,64 +2059,13 @@ def _materials_panel(active_case_id: str) -> None:
         with col_g2:
             st.info("提示：评审现场可选择左侧【DeepSeek API】实测大模型长卷宗语义提取，或使用【本地 Mock】极速演示。")
         if run_gold:
-            st.query_params.pop("case_id", None)
-            try:
-                with st.status("正在加载实战评测卷宗并执行穿透核验...", expanded=True) as status:
-                    pkg = ROOT / "sample_data" / "case_packages" / "GOLD_CASE_001"
-                    indictment_bytes = (pkg / "visible" / "documents" / "01_起诉书.docx").read_bytes()
-                    statement_bytes = (pkg / "visible" / "documents" / "05_被害人陈述.docx").read_bytes()
-                    st.write("1. 解析 DOCX 起诉书全文...")
-                    indictment_text = extract_document_text(indictment_bytes, filename="01_起诉书.docx")
-                    st.write("2. 解析 DOCX 被害人询问笔录...")
-                    statement_text = extract_document_text(statement_bytes, filename="05_被害人陈述.docx")
-                    supplementary_records = []
-                    for filename, label in (("03_证人证言.docx", "证人证言"), ("04_被告人供述与辩解.docx", "被告人供述与辩解")):
-                        st.write(f"2.{len(supplementary_records) + 1} 登记 {label}...")
-                        supplement_path = pkg / "visible" / "documents" / filename
-                        supplementary_records.append({
-                            "filename": filename,
-                            "text": extract_document_text(supplement_path.read_bytes(), filename=filename),
-                        })
-                    st.write("3. 直接解析原始 Excel 银行流水并规范化...")
-                    xlsx_bytes = (pkg / "visible" / "bank" / "02_银行流水账单.xlsx").read_bytes()
-                    csv_text, csv_skip_stats = extract_transactions_csv_detailed(xlsx_bytes, filename="02_银行流水账单.xlsx")
-                    total_skipped = sum(csv_skip_stats.values())
-                    if total_skipped > 0:
-                        st.warning(
-                            f"银行流水有 {total_skipped} 行未导入："
-                            f"方向无法识别 {csv_skip_stats.get('invalid_direction', 0)} 行、"
-                            f"日期无法解析 {csv_skip_stats.get('invalid_datetime', 0)} 行、"
-                            f"金额或对手方缺失 {csv_skip_stats.get('invalid_amount_or_counterparty', 0)} 行，"
-                            f"请核对原始文件。"
-                        )
-
-                    st.write("4. 运行事实主张抽取与确定性资金穿透对账引擎...")
-                    provider = provider_from_environment(provider_name)
-                    result = run_case_inputs(
-                        indictment_text=indictment_text,
-                        statement_text=statement_text,
-                        csv_text=csv_text,
-                        case_id="GOLD_CASE_001",
-                        task_id="TASK-GOLD-001",
-                        provider=provider,
-                        allow_multiple_claims=True,
-                        statement_provider=provider,
-                        enable_claim_audit=enable_claim_audit,
-                        audit_provider=provider,
-                        allow_missing_statement=True,
-                        transaction_evidence_id="EVI-BANK-XLSX",
-                    )
-                    status.update(label=f"实战评测案例审查完成：召回 {len(result.candidates)}/{len(result.transactions)} 笔流水，总额 ¥{result.claim.claimed_amount:,.2f}", state="complete")
-                st.session_state.result = result
-                st.session_state.supplementary_documents = supplementary_records
-                st.session_state.repository_path = _persist_result(result) if persist_locally else None
-                st.session_state.pop("decision", None)
-                st.session_state.pop("report", None)
-                st.session_state.pop("failed_audit_events", None)
-                st.success("实战评测案卷加载完毕！请前往【证据与资金流水】或【资金证据核验】完成全案复核。")
-            except Exception as exc:
-                st.session_state.failed_audit_events = getattr(exc, "audit_events", [])
-                st.error(f"实战案卷处理失败：{exc}")
+            if _run_gold_case(
+                provider_name=provider_name,
+                enable_claim_audit=enable_claim_audit,
+                persist_locally=persist_locally,
+            ):
+                st.session_state["nav_page"] = PAGE_GUIDE
+                st.rerun()
     elif source == "上传材料":
         st.markdown('<div class="section-kicker">案卷材料导入</div>', unsafe_allow_html=True)
         st.caption("按材料类型分别登记；完成度只统计客观上传状态，不构成材料完整性的法律判断。")
@@ -2249,6 +2208,227 @@ def _materials_panel(active_case_id: str) -> None:
             st.dataframe([event.to_dict() for event in failed_events], width="stretch", hide_index=True)
 
 
+
+GOLD_CASE_GUIDE = {
+    "case_name": "何某涉嫌诈骗案（虚构评测案例）",
+    "brief": [
+        "被告人何某以“云岭新材股权增值项目”为名，向朱某募集 736.8 万元，并声称资金用于内部股权份额、本金安全且有阶段性收益。",
+        "案发后发现：部分资金进入何某证券账户，部分资金用于偿还既有债务和个人支出；另有 125 万元通过第三人林某账户代收；期间又向朱某返还 132.6 万元。",
+    ],
+    "questions": [
+        "736.8 万元是否能够被银行流水完整印证？",
+        "资金最终流向哪里？",
+        "林某账户究竟是什么性质？",
+        "132.6 万元是真实投资收益、返款，还是需要进一步核验的疑似转回？",
+        "起诉书、银行流水、证人证言和被告人供述之间是否存在矛盾？",
+    ],
+    "story": [
+        ("0–20 秒", "先看指控：何某称其掌握内部项目额度，朱某因此支付 736.8 万元。"),
+        ("20–40 秒", "再看流水：系统从付款/收款两侧流水中恢复 18 笔付款，并识别 125 万元进入第三人林某账户。"),
+        ("40–60 秒", "再看去向：系统进一步标出 126.8 万元证券账户流入、241 万元疑似旧债支出以及 132.6 万元返还。"),
+        ("60–75 秒", "再看交叉核验：把银行记录与被害人陈述、证人证言、被告人供述逐项并列比对。"),
+        ("75–90 秒", "最后看边界：一致项给出系统支持，冲突项标记为待人工复核，而不是替司法人员下最终结论。"),
+    ],
+}
+
+
+def _navigate_to_page(page_label: str, state_key: str) -> None:
+    st.session_state["nav_page"] = page_label
+    st.session_state[state_key] = True
+    st.rerun()
+
+
+def _render_gold_guided_demo(guide) -> None:
+    """Five-step guided demo so a cold-start reviewer knows what to look at."""
+    demo_steps = [
+        {
+            "title": "核对指控金额",
+            "goal": "先确认起诉书指控的 736.8 万元是否能被银行流水完整重建。",
+            "evidence": "01 页面并排展示指控金额、已返还（待查）、未返还差额和待复核事项；02 页面可回看 18 笔原始付款。",
+            "note": "评审看点：系统不是读 Excel 求和，而是把付款方/收款方镜像流水合并成唯一交易事件后再核对。",
+            "page": PAGE_OVERVIEW,
+        },
+        {
+            "title": "发现第三方收款账户",
+            "goal": "确认 18 笔付款中哪些没有进入何某本人账户，而是进入林某账户。",
+            "evidence": "02 页面资金流向图把直接入何某账户与林某代收账户分开；金色/争议标记提示第三方代收需要人工判断。",
+            "note": "评审看点：林某账户不是模型猜出来的，而是由候选风险码、账户关系和言词证据共同指向。",
+            "page": PAGE_TRANSACTIONS,
+        },
+        {
+            "title": "追踪资金去向",
+            "goal": "回答钱后来去了哪里：证券账户、旧债、返还和其他支出分别是什么量级。",
+            "evidence": "02 页面资金流向图展示主要证据路径；疑似转回流水单独标记为待查，不直接当作法律冲减。",
+            "note": "评审看点：真实发生过的证券投资，不等于其向被害人宣称的项目投资真实性。",
+            "page": PAGE_TRANSACTIONS,
+        },
+        {
+            "title": "核验言词证据冲突",
+            "goal": "查看被害人陈述、证人证言、被告人供述和流水之间哪些地方一致、哪些地方冲突。",
+            "evidence": "03 页面把高风险阻断交易、冲突焦点和候选审查表放在一起；冲突项不会被系统自动采信。",
+            "note": "评审看点：系统知道什么时候不能下结论，会把争议留给经办人。",
+            "page": PAGE_REVIEW,
+        },
+        {
+            "title": "进入人工复核与留痕",
+            "goal": "最后看系统如何把机器候选、人工处置和签署版本固定下来。",
+            "evidence": "04 页面展示复核版本、审计日志和导出包；所有导出都带数据完整性指纹。",
+            "note": "评审看点：系统输出是可复核工作底稿，不是定罪、量刑或犯罪金额的最终认定。",
+            "page": PAGE_AUDIT,
+        },
+    ]
+    step_key = "gold_demo_step"
+    current_step = int(st.session_state.get(step_key, 0))
+    current_step = max(0, min(current_step, len(demo_steps) - 1))
+    st.session_state[step_key] = current_step
+    step = demo_steps[current_step]
+
+    render_section_heading("02 / 分步演示", "五步 Guided Demo", "从结论进入证据，再从证据回到人工复核")
+    st.progress((current_step + 1) / len(demo_steps), text=f"第 {current_step + 1} / {len(demo_steps)} 步 · {step['title']}")
+    st.markdown(
+        f'<article class="review-issue"><div class="issue-kicker"><span>STEP {current_step + 1:02d}</span>'
+        f'<span class="accessible-status status-pending"><span class="status-symbol">◌</span> 当前演示</span></div>'
+        f'<strong>{html.escape(step["title"])}</strong>'
+        f'<p>{html.escape(step["goal"])}</p>'
+        f'<p><strong>看哪里：</strong>{html.escape(step["evidence"])}</p>'
+        f'<p><strong>评审要点：</strong>{html.escape(step["note"])}</p></article>',
+        unsafe_allow_html=True,
+    )
+    col_prev, col_view, col_next = st.columns([1, 1.4, 1])
+    with col_prev:
+        if st.button("上一步", use_container_width=True, disabled=current_step == 0, key="gold_demo_prev"):
+            st.session_state[step_key] = current_step - 1
+            st.rerun()
+    with col_view:
+        if st.button("查看本步证据", type="primary", use_container_width=True, key="gold_demo_view"):
+            _navigate_to_page(step["page"], "guide_jump")
+    with col_next:
+        if current_step < len(demo_steps) - 1:
+            if st.button("下一步", use_container_width=True, key="gold_demo_next"):
+                st.session_state[step_key] = current_step + 1
+                st.rerun()
+        else:
+            if st.button("完成导读，进入人工复核", use_container_width=True, key="gold_demo_finish"):
+                _navigate_to_page(PAGE_REVIEW, "guide_jump")
+
+    with st.expander("90 秒口头讲解稿（供路演使用）", expanded=False):
+        for time_range, text in guide["story"]:
+            st.markdown(f"**{time_range}**　{text}")
+
+
+def case_guide_page(result) -> None:
+    """Cold-start guide for judges/reviewers who do not know the case file yet."""
+    signed = "decision" in st.session_state
+    status_label = "✓ 复核已完成" if signed else "◌ 等待人工复核"
+    data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "上传案件"
+    render_case_masthead(
+        result.claim.case_id,
+        status=status_label,
+        data_classification=data_label,
+        review_stage="评审导读与演示路线",
+    )
+
+    if result.claim.case_id == "GOLD_CASE_001":
+        guide = GOLD_CASE_GUIDE
+        claims_list = result.claims if result.claims else [result.claim]
+        all_candidates = [candidate for candidates in result.candidates_by_claim.values() for candidate in candidates]
+        if not all_candidates:
+            all_candidates = result.candidates
+        candidate_ids = {candidate.transaction_id for candidate in all_candidates}
+        third_party_tx_ids = {
+            candidate.transaction_id for candidate in all_candidates
+            if "THIRD_PARTY_RECIPIENT" in candidate.risk_codes
+        }
+        refund_txs = identify_refund_transactions(claims_list, result.transactions.values())
+        total_claimed = sum((c.claimed_amount for c in claims_list), Decimal("0")) if claims_list else Decimal("0")
+        direct_total = sum(
+            (tx.amount for tx in result.transactions.values() if tx.id in candidate_ids and tx.id not in third_party_tx_ids),
+            Decimal("0"),
+        )
+        third_party_total = sum(
+            (tx.amount for tx in result.transactions.values() if tx.id in third_party_tx_ids),
+            Decimal("0"),
+        )
+        refund_total = sum((tx.amount for tx in refund_txs), Decimal("0"))
+
+        render_section_heading("00 / 案件导读", "本案到底要核验什么", "面向未接触过案卷的评审：先理解问题，再查看证据")
+        render_stat_strip([
+            ("指控金额", f"¥{total_claimed:,.2f}", "起诉书主张"),
+            ("直接入何某账户", f"¥{direct_total:,.2f}", f"{len(candidate_ids - third_party_tx_ids)} 笔候选"),
+            ("第三方代收", f"¥{third_party_total:,.2f}", f"{len(third_party_tx_ids)} 笔候选"),
+            ("疑似返还/转回", f"¥{refund_total:,.2f}", f"{len(refund_txs)} 笔待查"),
+        ])
+        st.markdown(
+            '<div class="review-summary"><div class="section-kicker">案情简介</div>'
+            + "".join(f"<p>{html.escape(paragraph)}</p>" for paragraph in guide["brief"])
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+        render_section_heading("01 / 核心问题", "本次演示要回答的五个问题", "系统价值不在罗列流水，而在逐项核验这些事实")
+        for idx, question in enumerate(guide["questions"], 1):
+            st.markdown(
+                f'<div class="review-issue"><div class="issue-kicker"><span>问题 {idx:02d}</span>'
+                f'<span class="accessible-status status-pending"><span class="status-symbol">◌</span> 待核验</span></div>'
+                f'<strong>{html.escape(question)}</strong></div>',
+                unsafe_allow_html=True,
+            )
+
+        _render_gold_guided_demo(guide)
+
+        render_section_heading("03 / 快速进入", "按评审问题跳转", "每个入口都回到可复核证据，不是静态讲解页")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("① 核对指控金额", use_container_width=True, key="guide_go_overview"):
+                _navigate_to_page(PAGE_OVERVIEW, "guide_jump")
+            st.caption("看 736.8 万元是否被流水完整印证。")
+        with c2:
+            if st.button("② 查看资金流向", use_container_width=True, key="guide_go_flow"):
+                _navigate_to_page(PAGE_TRANSACTIONS, "guide_jump")
+            st.caption("看 125 万第三方代收、126.8 万证券账户和 132.6 万返还。")
+        with c3:
+            if st.button("③ 查看证据冲突", use_container_width=True, key="guide_go_review"):
+                _navigate_to_page(PAGE_REVIEW, "guide_jump")
+            st.caption("看系统何时只能标记冲突、要求人工复核。")
+        c4, c5 = st.columns(2)
+        with c4:
+            if st.button("④ 查看案件关系图", use_container_width=True, key="guide_go_graph"):
+                _navigate_to_page(PAGE_GRAPH, "guide_jump")
+            st.caption("用关系图快速理解何某、林某、朱某和下游账户。")
+        with c5:
+            if st.button("⑤ 查看底稿留痕", use_container_width=True, key="guide_go_audit"):
+                _navigate_to_page(PAGE_AUDIT, "guide_jump")
+            st.caption("复核版本、审计日志和导出证据链。")
+
+        st.markdown(
+            '<div class="legal-notice"><strong>评审提示：</strong>本导读用于帮助首次接触案卷的人员理解演示路径；'
+            '所有金额、候选、风险和结论仍以 01–05 页面中的确定性核验结果与人工签署为准。</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    # Generic uploaded/history case: explain the workbench without inventing facts.
+    claims_list = result.claims if result.claims else [result.claim]
+    total_claimed = sum((c.claimed_amount for c in claims_list), Decimal("0")) if claims_list else Decimal("0")
+    render_section_heading("00 / 案件导读", "先看审查路线，再看证据细节", "面向首次接触本案材料的人员")
+    render_stat_strip([
+        ("当前指控金额", f"¥{total_claimed:,.2f}", "起诉书/材料主张"),
+        ("解析流水", f"{len(result.transactions)} 笔", "规范化交易"),
+        ("召回候选", f"{len(result.candidates)} 笔", "待人工核验"),
+        ("复核状态", "已签署" if signed else "待复核", "人工确认"),
+    ])
+    st.markdown(
+        '<div class="review-summary"><div class="section-kicker">建议路线</div>'
+        '<p>1. 先在【01 案件审查概览】确认指控金额与候选规模；</p>'
+        '<p>2. 再到【02 涉案资金流水】查看资金流向图和逐笔流水；</p>'
+        '<p>3. 然后进入【03 资金证据核验】逐笔处置候选；</p>'
+        '<p>4. 最后在【04 审查底稿留痕】签署并导出留痕。</p></div>',
+        unsafe_allow_html=True,
+    )
+    st.info("当前案件没有内置案情导读；系统不会编造案情背景。请以上传材料和页面中的证据定位为准。")
+
+
+
 def _case_overview() -> None:
     result = st.session_state.get("result")
     if result is not None:
@@ -2263,6 +2443,13 @@ def _case_overview() -> None:
 
         net_claimed = max(total_claimed - refund_total, Decimal("0"))
         total_candidates = sum(len(cands) for cands in result.candidates_by_claim.values()) if result.candidates_by_claim else len(result.candidates)
+
+        if result.claim.case_id == "GOLD_CASE_001":
+            st.markdown(
+                '<div class="legal-notice"><strong>首次评审建议：</strong>如果尚未阅读案情，请先查看左侧 '
+                '<strong>【00 案件导读（评审）】</strong>：该页用 90 秒说明本案五个待核验问题，再回到本页查看确定性金额和证据状态。</div>',
+                unsafe_allow_html=True,
+            )
 
         render_section_heading("01 / 总览", "全案资金证据概览", "指控金额、流水核验与审查事项")
         if refund_total > 0:
@@ -3289,13 +3476,7 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-PAGES = [
-    "01  案件审查概览",
-    "02  涉案资金流水",
-    "03  资金证据核验",
-    "04  审查底稿留痕",
-    "05  案件关系图",
-]
+# 页面常量与 PAGES 已在文件顶部定义，供导读页函数与侧边栏共同使用。
 
 # 侧边栏信息层级：当前案件 → 工作区导航（主角）→ 案件管理 → 设置（沉底）。
 sidebar_result = st.session_state.get("result")
@@ -3339,7 +3520,7 @@ st.sidebar.markdown('<div class="section-kicker sidebar-operation-heading">工�
 # inspectable destination even when the current page contains a large editor.
 # 当前页用 primary 渲染，再由 CSS 压平为“左侧藏青竖条”选中态，不再叠加字符标记。
 if st.session_state.get("nav_page") not in PAGES:
-    st.session_state["nav_page"] = PAGES[0]
+    st.session_state["nav_page"] = PAGE_OVERVIEW if sidebar_result is None else PAGE_GUIDE
 page_selection = st.session_state["nav_page"]
 for nav_index, nav_label in enumerate(PAGES, 1):
     if st.sidebar.button(
@@ -3362,7 +3543,7 @@ if st.sidebar.button("新建案件", use_container_width=True, key="sidebar_new_
         "failed_audit_events", "materials_panel_expanded",
     ):
         st.session_state.pop(state_key, None)
-    st.session_state["nav_page"] = PAGES[0]
+    st.session_state["nav_page"] = PAGE_OVERVIEW
     st.session_state["materials_panel_expanded"] = True
     st.session_state["material_source"] = "上传材料"
     st.session_state["landing_panel"] = True
@@ -3390,7 +3571,7 @@ if history_cases:
     if st.sidebar.button("打开所选案件", use_container_width=True, key="sidebar_load_case"):
         target_case_id = switch_options[selected_label]
         if _restore_case_into_session(_history_db, target_case_id):
-            st.session_state["nav_page"] = PAGES[0]
+            st.session_state["nav_page"] = PAGE_GUIDE if target_case_id == "GOLD_CASE_001" else PAGE_OVERVIEW
             st.query_params["case_id"] = target_case_id
             st.session_state["sidebar_notice"] = f"已打开历史案件：{selected_label}"
             st.rerun()
@@ -3414,7 +3595,7 @@ if history_cases:
                         "failed_audit_events", "materials_panel_expanded",
                     ):
                         st.session_state.pop(state_key, None)
-                    st.session_state["nav_page"] = PAGES[0]
+                    st.session_state["nav_page"] = PAGE_OVERVIEW
                     st.query_params.pop("case_id", None)
                 st.session_state["sidebar_notice"] = f"已删除历史案件：{delete_label}"
                 st.rerun()
@@ -3462,11 +3643,17 @@ if sidebar_result is not None:
             st.write(f"输入 Tokens · {ce.input_tokens}")
             st.write(f"输出 Tokens · {ce.output_tokens or 0}")
 
-if page_selection.startswith("01"):
+if page_selection.startswith("00"):
+    if sidebar_result is None:
+        render_section_heading("页面 / 空", "请先加载案卷材料", "当前工作区需要有效案件数据")
+        st.warning("— 当前没有可用审查任务。请先在【01 案件审查概览】打开演示案件或上传材料。")
+    else:
+        case_guide_page(sidebar_result)
+elif page_selection.startswith("01"):
     case_page()
 elif sidebar_result is None:
     render_section_heading("页面 / 空", "请先加载案卷材料", "当前工作区需要有效案件数据")
-    st.warning("— 当前没有可用审查任务。请前往【01  案件审查概览】载入案卷或上传材料。")
+    st.warning("— 当前没有可用审查任务。请前往【01 案件审查概览】载入案卷或上传材料。")
 elif page_selection.startswith("02"):
     transactions_page(sidebar_result)
 elif page_selection.startswith("03"):

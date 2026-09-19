@@ -36,7 +36,15 @@ def _fund_flow_component():
 
 
 def render_fund_flow(payload: dict[str, Any], *, height: int = 420, key: str | None = None):
-    """Mount the fund flow graph and return its state (``.selection``)."""
+    """Mount the fund flow graph.
+
+    Selection is intentionally kept inside the browser-side Cytoscape instance.
+    Registering an ``on_selection_change`` callback turns every node tap into a
+    Streamlit rerun; during that rerun the fixed fullscreen overlay can be
+    rebuilt for a frame, which visibly flashes the page behind it. The detailed
+    source information already remains available in the graph tooltips, so no
+    backend state round-trip is needed here.
+    """
     fund_flow = _fund_flow_component()
     return fund_flow(
         key=key,
@@ -47,6 +55,4 @@ def render_fund_flow(payload: dict[str, Any], *, height: int = 420, key: str | N
         # uses it to restore zoom/pan when Streamlit remounts the subtree.
         data={**payload, "view_height": height, "component_key": key or ""},
         height=height,
-        default={"selection": None},
-        on_selection_change=lambda: None,
     )

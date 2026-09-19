@@ -23,6 +23,18 @@ const FF_WHEEL_STEP = 1.25;
 // the graph used to jump back to a fit-all view each time. Keyed by the
 // caller's ``component_key`` and only reused when the graph is unchanged.
 const FF_VIEWPORTS = (window.__ffViewports = window.__ffViewports || {});
+const FF_EXPANDED = (window.__ffExpanded = window.__ffExpanded || {});
+
+function ffSetExpanded(root, canvas, fsBtn, cy, viewKey, viewH, on) {
+  root.classList.toggle('ff-expanded', on);
+  if (fsBtn) fsBtn.textContent = on ? '退出全屏' : '全屏阅览';
+  document.body.style.overflow = on ? 'hidden' : '';
+  const px = on ? window.innerHeight : viewH;
+  root.style.height = px + 'px';
+  canvas.style.height = px + 'px';
+  if (cy && !cy.destroyed()) cy.resize();
+  FF_EXPANDED[viewKey] = !!on;
+}
 
 function ffPartition(role) {
   if (role === 'victim') return 0;
@@ -244,7 +256,7 @@ function ffBuildTooltip(tip, title, rows) {
 }
 
 export default function (component) {
-  const { data, setStateValue, parentElement, key } = component;
+  const { data, parentElement, key } = component;
   let root = parentElement.querySelector('.ff-root');
   if (!root) {
     root = document.createElement('div');
@@ -579,17 +591,6 @@ export default function (component) {
     ffAddAccents(cy);
     ffRouteRefunds(cy);
     ffFitWhenReady(cy, canvas, restoreView);
-    // On a genuine remount Python echoes the last selection back in the
-    // payload; re-apply the focus highlight here. (On a plain rerun the guard
-    // above keeps the live instance, which already carries the newer
-    // selection, so this only runs for a real rebuild.)
-    if (payload.selected && payload.selected.id) {
-      const el = cy.getElementById(payload.selected.id);
-      if (el && el.length) {
-        el.select();
-        ffApplyFocus(el);
-      }
-    }
   }, (mode) => {
     root.dataset.ffLayout = mode;
   });
@@ -632,20 +633,17 @@ export default function (component) {
   // 滚轮缩放、拖拽平移、点选节点、悬浮提示完全一致；Esc 或再点一次退出。
   const fsBtn = root.querySelector('[data-ff="fullscreen"]');
   const setExpanded = (on) => {
-    root.classList.toggle('ff-expanded', on);
-    fsBtn.textContent = on ? '退出全屏' : '全屏阅览';
-    document.body.style.overflow = on ? 'hidden' : '';
-    const px = on ? window.innerHeight : viewH;
-    root.style.height = px + 'px';
-    canvas.style.height = px + 'px';
-    cy.resize();
+    ffSetExpanded(root, canvas, fsBtn, cy, viewKey, viewH, on);
     cy.fit(undefined, 24);
   };
   fsBtn.addEventListener('click', () => setExpanded(!root.classList.contains('ff-expanded')));
   document.addEventListener('keydown', (evt) => {
     if (evt.key === 'Escape' && root.classList.contains('ff-expanded')) setExpanded(false);
   });
-  cy.on('destroy', () => { document.body.style.overflow = ''; });
+  cy.on('destroy', () => {
+    if (FF_EXPANDED[viewKey]) document.body.style.overflow = '';
+  });
+  if (FF_EXPANDED[viewKey]) setExpanded(true);
 
   function moveTip(evt) {
     const rect = root.getBoundingClientRect();
@@ -706,39 +704,17 @@ export default function (component) {
   }
 
   cy.on('tap', 'node[kind = "account"]', (evt) => {
+    evt.target.select();
     ffApplyFocus(evt.target);
-    const d = evt.target.data();
-    setStateValue('selection', {
-      type: 'node',
-      id: d.id,
-      name: d.name,
-      role: d.role,
-      display_role: d.display_role,
-      masked_account: d.masked_account,
-      total_in_full: d.total_in_full,
-      total_out_full: d.total_out_full,
-    });
   });
   cy.on('tap', 'edge', (evt) => {
+    evt.target.select();
     ffApplyFocus(evt.target);
-    const d = evt.target.data();
-    setStateValue('selection', {
-      type: 'edge',
-      id: d.id,
-      count: d.count,
-      amount_full: d.amount_full,
-      disposition_label: d.disposition_label,
-      reason: d.reason,
-      date_min: d.date_min,
-      date_max: d.date_max,
-      transaction_ids: d.transaction_ids,
-      source_refs: d.source_refs || [],
-    });
   });
   cy.on('tap', (evt) => {
     if (evt.target === cy) {
+      cy.elements().unselect();
       ffApplyFocus(null);
-      setStateValue('selection', null);
     }
   });
 
