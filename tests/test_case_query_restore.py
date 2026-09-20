@@ -10,11 +10,16 @@ from legal_funds_agent.domain.models import Claim
 from legal_funds_agent.persistence.database import connect
 from legal_funds_agent.persistence.repository import Repository
 from legal_funds_agent.services.candidate_matcher import match_claim_transactions
-from legal_funds_agent.services.report_service import build_report, report_to_json, report_to_html
+from legal_funds_agent.services.report_service import report_to_json, report_to_html
 from legal_funds_agent.services.review_engine import build_decision
 from legal_funds_agent.services.transaction_analysis import transaction_canonical_key
 from legal_funds_agent.services.verification_engine import find_duplicate_transactions
-from legal_funds_agent.workflow.vertical_slice import WorkflowResult, confirm_claim_extraction, confirm_transactions
+from legal_funds_agent.workflow.vertical_slice import (
+    WorkflowResult,
+    build_claim_report,
+    confirm_claim_extraction,
+    confirm_transactions,
+)
 import test_gold_case_002 as gold002
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -2,7 +2,10 @@
 import unittest
 
 from legal_funds_agent.llm.schemas import SCHEMA_INVESTIGATION_NOTE, SCHEMA_PAYMENT_CLAIM
-from legal_funds_agent.services.case_report_service import polish_investigation_checklist
+from legal_funds_agent.services.case_report_service import (
+    polish_investigation_checklist,
+    request_investigation_notes,
+)
 
 
 def checklist_item(**overrides):
@@ -61,6 +64,14 @@ class PolishTest(unittest.TestCase):
         self.assertFalse(report["checked"])
         self.assertEqual(report["notes"], ["INVESTIGATION_NOTE_CALL_FAILED:RuntimeError"])
         self.assertEqual(len(items), 1)
+
+    def test_provider_failure_can_bypass_success_cache(self):
+        with self.assertRaises(RuntimeError):
+            request_investigation_notes(
+                [checklist_item()],
+                FakeProvider(error=RuntimeError("boom")),
+                raise_on_provider_error=True,
+            )
 
     def test_rewrite_using_existing_numbers_is_applied(self):
         provider = FakeProvider(rows=[{

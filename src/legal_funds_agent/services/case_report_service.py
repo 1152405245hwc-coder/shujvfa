@@ -310,7 +310,8 @@ def _numeric_tokens(text: str) -> set[Decimal]:
 
 
 def request_investigation_notes(
-    payload: list[dict[str, Any]], provider: LLMProvider | None
+    payload: list[dict[str, Any]], provider: LLMProvider | None, *,
+    raise_on_provider_error: bool = False,
 ) -> tuple[dict[str, dict[str, str]], dict[str, Any]]:
     """Ask the model to reword the checklist. Returns ``({item_id: wording}, audit)``.
 
@@ -336,6 +337,8 @@ def request_investigation_notes(
             schema_name=SCHEMA_INVESTIGATION_NOTE,
         )
     except Exception as exc:  # noqa: BLE001 - wording is optional, never fatal
+        if raise_on_provider_error:
+            raise
         report["notes"].append(f"INVESTIGATION_NOTE_CALL_FAILED:{type(exc).__name__}")
         return {}, report
 

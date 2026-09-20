@@ -87,6 +87,16 @@ class WorkflowResult:
     alias_registry: PartyAliasRegistry | None = None
 
 
+@dataclass(frozen=True)
+class ClaimReviewContext:
+    claim: Claim
+    candidates: list[CandidateMatch]
+    system_decision: ReviewDecision
+    latest_human_decision: ReviewDecision | None
+    statement_conflicts: list[str]
+    source_locators: list[SourceLocator]
+
+
 
 class WorkflowExecutionError(RuntimeError):
     def __init__(self, message: str, audit_events: list[AuditEvent]):
@@ -416,6 +426,78 @@ def confirm_all_claims(claims: list[Claim]) -> list[Claim]:
     return [confirm_claim_extraction(c) for c in claims]
 
 
+def build_claim_review_context(
+    result: WorkflowResult,
+    target_claim: Claim,
+    decisions_by_claim: dict[str, ReviewDecision] | None = None,
+) -> ClaimReviewContext:
+    """Resolve every claim-scoped value from the same selected claim."""
+    if target_claim.id in result.candidates_by_claim:
+        candidates = list(result.candidates_by_claim[target_claim.id])
+    else:
+        candidates = list(result.candidates) if target_claim.id == result.claim.id else []
+
+    system_decision = result.system_decisions_by_claim.get(target_claim.id)
+    if system_decision is None:
+        system_decision = (
+            result.system_decision
+            if target_claim.id == result.claim.id
+            else build_decision(
+                target_claim,
+                result.transactions,
+                has_pending_candidates=bool(candidates),
+                material_conflict=bool(
+                    result.statement_conflicts_by_claim.get(target_claim.id, [])
+                ),
+                reason_codes=result.statement_conflicts_by_claim.get(target_claim.id, []),
+            )
+        )
+
+    latest_human_decision = (decisions_by_claim or {}).get(target_claim.id)
+    if (
+        latest_human_decision is not None
+        and latest_human_decision.decision_type != DecisionType.HUMAN_CONFIRMED
+    ):
+        latest_human_decision = None
+
+    source_locators = list(target_claim.source_locators)
+    if not source_locators and target_claim.id == result.claim.id:
+        source_locators = list(result.claim_locators)
+
+    statement_conflicts = result.statement_conflicts_by_claim.get(target_claim.id)
+    if statement_conflicts is None:
+        statement_conflicts = (
+            list(result.statement_conflicts) if target_claim.id == result.claim.id else []
+        )
+
+    return ClaimReviewContext(
+        claim=target_claim,
+        candidates=candidates,
+        system_decision=system_decision,
+        latest_human_decision=latest_human_decision,
+        statement_conflicts=list(statement_conflicts),
+        source_locators=source_locators,
+    )
+
+
+def build_claim_report(
+    result: WorkflowResult,
+    target_claim: Claim,
+    decision: ReviewDecision,
+) -> dict:
+    """Build one claim's report without leaking first-claim compatibility fields."""
+    context = build_claim_review_context(result, target_claim)
+
+    return build_report(
+        target_claim,
+        decision,
+        result.transactions,
+        claim_locators=context.source_locators,
+        statement_conflicts=context.statement_conflicts,
+        duplicate_groups=result.duplicate_groups,
+    )
+
+
 def confirm_transactions(result: WorkflowResult, transaction_ids: list[str], *, reviewer: str, claim_id: str | None = None) -> tuple[ReviewDecision, dict]:
     target_claim = result.claim
     if claim_id:
@@ -522,11 +604,7 @@ def review_transactions(result: WorkflowResult, actions: list[TransactionReviewA
     ))
     if result.system_decisions_by_claim:
         result.system_decisions_by_claim[target_claim.id] = decision
-    return decision, build_report(
-        result.claim, decision, result.transactions, claim_locators=result.claim_locators,
-        statement_conflicts=result.statement_conflicts,
-        duplicate_groups=result.duplicate_groups,
-    )
+    return decision, build_claim_report(result, target_claim, decision)
 
 
 def main() -> None:

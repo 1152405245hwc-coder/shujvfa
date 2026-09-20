@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 from legal_funds_agent.domain.models import TransactionReviewAction
-from legal_funds_agent.services.report_service import report_to_csv, report_to_html, report_to_json
+from legal_funds_agent.services.report_service import build_report, report_to_csv, report_to_html, report_to_json
 from legal_funds_agent.workflow.vertical_slice import (
     confirm_claim_extraction, confirm_transactions, review_transactions, run_demo_case,
 )
@@ -56,6 +56,20 @@ class ReportAndDispositionTest(unittest.TestCase):
         self.assertEqual(v3.version, 3)
         self.assertEqual(v3.supersedes_decision_id, v2.id)
         self.assertNotEqual(v3.id, v2.id)
+
+    def test_report_rejects_claim_decision_mismatch(self):
+        decision, _ = confirm_transactions(self.result, ["TX-T001"], reviewer="tester")
+        other_claim = self.result.claim.model_copy(update={"id": "CLM-OTHER"})
+
+        with self.assertRaisesRegex(ValueError, "REPORT_CLAIM_DECISION_MISMATCH"):
+            build_report(other_claim, decision, self.result.transactions)
+
+    def test_report_rejects_case_decision_mismatch(self):
+        decision, _ = confirm_transactions(self.result, ["TX-T001"], reviewer="tester")
+        other_case_claim = self.result.claim.model_copy(update={"case_id": "CASE-OTHER"})
+
+        with self.assertRaisesRegex(ValueError, "REPORT_CASE_DECISION_MISMATCH"):
+            build_report(other_case_claim, decision, self.result.transactions)
 
 
 if __name__ == "__main__":

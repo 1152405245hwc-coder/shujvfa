@@ -7,6 +7,8 @@ from legal_funds_agent.domain.models import Claim, Transaction
 from legal_funds_agent.llm.schemas import SCHEMA_EVIDENCE_CONFLICT, SCHEMA_PAYMENT_CLAIM
 from legal_funds_agent.services.evidence_conflict_service import (
     build_evidence_conflict_matrix,
+    deterministic_conflict_entries,
+    enrich_conflict_entries,
     third_party_account_facts,
 )
 
@@ -168,6 +170,20 @@ class GenericMatrixTest(unittest.TestCase):
         )
         entry = next(item for item in matrix if item["id"] == "CONFLICT-TP-A009")
         self.assertEqual(len(entry["materials"]), 1)
+
+    def test_provider_failure_can_bypass_success_cache(self):
+        entries, facts = deterministic_conflict_entries(
+            {t.id: t for t in FLOW_THROUGH}, [claim()]
+        )
+        materials = [{"label": "04 被告人供述.docx", "text": "材料原文"}]
+        with self.assertRaises(RuntimeError):
+            enrich_conflict_entries(
+                entries,
+                facts,
+                materials,
+                FakeProvider(error=RuntimeError("boom")),
+                raise_on_provider_error=True,
+            )
 
     def test_unsupported_provider_is_not_called(self):
         materials = [{"filename": "04 被告人供述.docx", "text": "王某称该账户用于项目款归集。"}]

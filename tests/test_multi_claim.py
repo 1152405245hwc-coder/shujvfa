@@ -9,6 +9,7 @@ from legal_funds_agent.services.verification_engine import (
     verify_case_decisions,
 )
 from legal_funds_agent.workflow.vertical_slice import (
+    build_claim_review_context,
     confirm_claim_extraction,
     confirm_transactions,
     run_case_inputs,
@@ -119,6 +120,52 @@ class MultiClaimWorkflowTest(unittest.TestCase):
         self.assertEqual(summary.claim_count, 2)
         self.assertEqual(summary.fully_corroborated_count, 2)
         self.assertEqual(summary.cross_claim_errors, [])
+
+    def test_second_claim_report_uses_only_second_claim_context(self):
+        result = run_case_inputs(
+            indictment_text=INDICTMENT_TEXT,
+            statement_text=STATEMENT_TEXT,
+            csv_text=CSV_CONTENT,
+            provider=MultiClaimMockProvider(),
+            allow_multiple_claims=True,
+        )
+
+        c1 = confirm_claim_extraction(result.claims[0])
+        c2 = confirm_claim_extraction(result.claims[1])
+        result.claims = [c1, c2]
+        result.claim = c1
+        result.statement_conflicts = ["FIRST_CLAIM_CONFLICT"]
+        result.statement_conflicts_by_claim = {
+            c1.id: ["FIRST_CLAIM_CONFLICT"],
+            c2.id: ["SECOND_CLAIM_CONFLICT"],
+        }
+
+        decision, report = confirm_transactions(
+            result,
+            ["TX-TX-M002"],
+            reviewer="prosecutor_a",
+            claim_id=c2.id,
+        )
+
+        self.assertEqual(report["claim"]["id"], c2.id)
+        self.assertEqual(report["claim"]["claimed_amount"], "20000.00")
+        self.assertEqual(report["decision"]["claim_id"], c2.id)
+        self.assertEqual(report["statement_conflicts"], ["SECOND_CLAIM_CONFLICT"])
+        self.assertEqual(
+            report["claim_locators"],
+            [locator.model_dump(mode="json") for locator in c2.source_locators],
+        )
+        self.assertEqual(decision.claim_id, c2.id)
+
+        context = build_claim_review_context(result, c2, {c2.id: decision})
+        self.assertEqual(context.claim.id, c2.id)
+        self.assertEqual(context.latest_human_decision, decision)
+        self.assertEqual(context.statement_conflicts, ["SECOND_CLAIM_CONFLICT"])
+        self.assertEqual(context.source_locators, c2.source_locators)
+
+        result.system_decisions_by_claim.pop(c2.id)
+        rebuilt_context = build_claim_review_context(result, c2)
+        self.assertEqual(rebuilt_context.system_decision.claim_id, c2.id)
 
     def test_cross_claim_double_counting_is_prohibited(self):
         result = run_case_inputs(

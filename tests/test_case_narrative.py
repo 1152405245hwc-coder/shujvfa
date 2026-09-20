@@ -14,6 +14,7 @@ from legal_funds_agent.llm.schemas import SCHEMA_CASE_NARRATIVE, SCHEMA_PAYMENT_
 from legal_funds_agent.services.case_narrative_service import (
     build_narrative_facts,
     generate_case_narrative,
+    generate_narrative_from_facts,
     narrative_body_html,
     narrative_html_section,
 )
@@ -131,6 +132,14 @@ class NarrativeGenerationTest(unittest.TestCase):
         )
         self.assertIsNone(narrative)
         self.assertEqual(audit["notes"], ["CASE_NARRATIVE_CALL_FAILED:RuntimeError"])
+
+    def test_provider_failure_can_bypass_success_cache(self):
+        with self.assertRaises(RuntimeError):
+            generate_narrative_from_facts(
+                build_narrative_facts(master_report()),
+                FakeProvider(error=RuntimeError("boom")),
+                raise_on_provider_error=True,
+            )
 
     def test_empty_response_is_recorded(self):
         narrative, audit = generate_case_narrative(master_report(), FakeProvider(rows=[]))

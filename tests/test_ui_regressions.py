@@ -203,6 +203,42 @@ class DeepSeekKeyConfigTest(unittest.TestCase):
         self.assertIn("请展开左侧【⚙ 模型与规则配置】粘贴密钥", source)
         self.assertIn("或切换回【本地模拟（推荐演示）】", source)
 
+    def test_intelligent_query_uses_the_same_page_provider_config(self):
+        app_source = APP_PATH.read_text(encoding="utf-8")
+        panel_source = QUERY_PANEL_PATH.read_text(encoding="utf-8")
+        self.assertIn("provider_factory=lambda: _provider_from_ui_config(provider_name)", app_source)
+        self.assertIn("provider_factory()", panel_source)
+        self.assertIn('provider_from_environment(provider_name)', panel_source)
+
+    def test_model_cache_key_contains_non_secret_provider_fingerprint(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn("def _provider_cache_context(provider_name: str):", source)
+        self.assertIn('"credential_hash": hashlib.sha256(effective_key.encode("utf-8")).hexdigest()', source)
+        self.assertIn("provider_fingerprint: str, _provider", source)
+        self.assertIn("raise_on_provider_error=True", source)
+
+
+class HtmlEscapingRegressionTest(unittest.TestCase):
+    def test_dynamic_claim_fields_are_escaped_before_unsafe_html_rendering(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn("html.escape(str(claim.victim_name))", source)
+        self.assertIn("html.escape(str(claim.time_start))", source)
+        self.assertIn('html.escape(str(claim.alleged_recipient_name or "指定涉案账户"))', source)
+
+    def test_shared_heading_escapes_all_dynamic_text(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        start = source.index("def render_section_heading(")
+        end = source.index("STATUS_CONFIG =", start)
+        helper = source[start:end]
+        self.assertIn("html.escape(str(subtitle))", helper)
+        self.assertIn("html.escape(str(number))", helper)
+        self.assertIn("html.escape(str(title))", helper)
+
+    def test_multi_claim_banner_escapes_material_derived_labels(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn('progress_detail = html.escape("；".join(parts))', source)
+        self.assertIn("conflict_labels = html.escape(", source)
+
 
 class EvidenceGraphLayoutRegressionTest(unittest.TestCase):
     def test_graph_detail_and_query_use_stacked_full_width_sections(self):
@@ -226,20 +262,80 @@ class EvidenceGraphLayoutRegressionTest(unittest.TestCase):
 
 
 class ReviewFlowRegressionTest(unittest.TestCase):
+    def test_saved_review_report_and_filename_use_the_current_claim(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertEqual(source.count("report = build_claim_report(result, claim, decision)"), 2)
+        self.assertIn("st.session_state.report = report", source)
+        self.assertIn(
+            'file_name=f"{decision.case_id}-{decision.claim_id}-审查底稿.html"',
+            source,
+        )
+        self.assertNotIn(
+            'file_name=f"{result.claim.case_id}-{result.claim.id}-审查底稿.html"',
+            source,
+        )
+
     def test_supersedes_is_scoped_to_the_current_claim(self):
         """多主张案件中，会话里保存的可能是另一主张的已签署决定；跨主张直接作为
         supersedes 传入会触发 SUPERSEDES_CLAIM_MISMATCH，签署路径必须按主张过滤。"""
         source = APP_PATH.read_text(encoding="utf-8")
-        self.assertIn('getattr(prior_decision, "claim_id", None) == claim.id', source)
+        self.assertIn("supersedes = claim_context.latest_human_decision", source)
         self.assertNotIn("supersedes=st.session_state.get(\"decision\")", source)
         self.assertIn("复核版本链与当前主张不一致", source)
 
     def test_multi_claim_progress_banner_is_shown_on_review_and_audit_pages(self):
         source = APP_PATH.read_text(encoding="utf-8")
-        self.assertIn("def _render_multi_claim_progress(result, claims_list)", source)
+        self.assertIn("def _render_multi_claim_progress(result, claims_list, decisions_map=None)", source)
         self.assertIn("多主张案件进度提醒", source)
         self.assertIn("HUMAN_CONFIRMED", source)
-        self.assertEqual(source.count("_render_multi_claim_progress(result, claims_list)"), 3)
+        self.assertEqual(source.count("_render_multi_claim_progress("), 3)
+
+    def test_review_page_uses_one_claim_scoped_context(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        start = source.index("def review_page(result)")
+        end = source.index("def evidence_graph_page(result)", start)
+        review_page = source[start:end]
+
+        self.assertIn("claim_context = build_claim_review_context(result, claim, decisions_map)", review_page)
+        self.assertIn("claim_context.latest_human_decision", review_page)
+        self.assertIn("claim_context.statement_conflicts", review_page)
+        self.assertIn("claim_context.source_locators", review_page)
+        self.assertNotIn("result.statement_conflicts", review_page)
+        self.assertNotIn("result.claim_locators", review_page)
+
+    def test_case_completion_requires_every_claim_to_be_signed(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn("def _case_review_completion(result, decisions_map=None)", source)
+        self.assertIn('return f"◌ 复核进行中 {signed_count}/{claim_count}"', source)
+        self.assertIn('f"复核进行中（{signed_count}/{claim_count}）"', source)
+        self.assertNotIn('signed = "decision" in st.session_state', source)
+
+    def test_signed_claim_can_continue_to_next_claim_and_scroll_to_selector(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        start = source.index("def review_page(result)")
+        end = source.index("def evidence_graph_page(result)", start)
+        review_page = source[start:end]
+
+        self.assertIn('id="review-claim-selector-anchor"', review_page)
+        self.assertIn('st.session_state.pop("scroll_to_review_claim_selector", False)', review_page)
+        self.assertIn("target.scrollIntoView({behavior: 'smooth', block: 'start'})", review_page)
+        self.assertIn('st.session_state["review_claim_selector"] = label', review_page)
+        self.assertIn('st.session_state["scroll_to_review_claim_selector"] = True', review_page)
+        self.assertIn('"↑ 继续处理下一笔主张"', review_page)
+        self.assertIn('key="continue_next_pending_claim"', review_page)
+
+    def test_all_signed_claims_can_jump_directly_to_audit_page(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        start = source.index("def review_page(result)")
+        end = source.index("def evidence_graph_page(result)", start)
+        review_page = source[start:end]
+
+        self.assertIn("elif signed_notice and len(claims_list) > 1 and not next_pending:", review_page)
+        self.assertIn('"前往 04 审查底稿留痕"', review_page)
+        self.assertIn('key="go_to_audit_after_all_claims"', review_page)
+        self.assertIn('st.session_state["nav_page"] = PAGE_AUDIT', review_page)
+        self.assertIn('on_click=_go_to_audit_after_review', review_page)
+        self.assertNotIn('_navigate_to_page(PAGE_AUDIT, "review_complete_jump")', review_page)
 
     def test_parse_completion_jumps_to_review_page_with_a_notice(self):
         source = APP_PATH.read_text(encoding="utf-8")

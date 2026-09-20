@@ -30,6 +30,11 @@ def build_report(claim: Claim, decision: ReviewDecision, transactions: dict[str,
     from legal_funds_agent.services.topology_service import build_fund_flow_topology, generate_mermaid_graph
     from legal_funds_agent.services.case_report_service import _fund_flow_table_rows
 
+    if claim.id != decision.claim_id:
+        raise ValueError("REPORT_CLAIM_DECISION_MISMATCH")
+    if claim.case_id != decision.case_id:
+        raise ValueError("REPORT_CASE_DECISION_MISMATCH")
+
     claim_payload = claim.model_dump(mode="json")
     claim_payload["victim_account"] = _mask_account(claim.victim_account)
     claim_payload["alleged_recipient_account"] = _mask_account(claim.alleged_recipient_account)

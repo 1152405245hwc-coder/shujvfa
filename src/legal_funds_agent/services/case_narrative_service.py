@@ -145,7 +145,8 @@ def build_narrative_facts(report: dict[str, Any]) -> dict[str, Any]:
 
 
 def generate_narrative_from_facts(
-    facts: dict[str, Any], provider: LLMProvider | None
+    facts: dict[str, Any], provider: LLMProvider | None, *,
+    raise_on_provider_error: bool = False,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Model call + validation over a pre-built fact pack.
 
@@ -170,6 +171,8 @@ def generate_narrative_from_facts(
             schema_name=SCHEMA_CASE_NARRATIVE,
         )
     except Exception as exc:  # noqa: BLE001 - the workbook must render regardless
+        if raise_on_provider_error:
+            raise
         audit["notes"].append(f"CASE_NARRATIVE_CALL_FAILED:{type(exc).__name__}")
         return None, audit
 

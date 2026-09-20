@@ -226,6 +226,8 @@ def enrich_conflict_entries(
     facts: list[dict[str, Any]],
     materials: list[dict[str, str]],
     provider: LLMProvider | None,
+    *,
+    raise_on_provider_error: bool = False,
 ) -> list[dict[str, Any]]:
     """The model half: attach material statements to the deterministic facts.
 
@@ -256,6 +258,8 @@ def enrich_conflict_entries(
             schema_name=SCHEMA_EVIDENCE_CONFLICT,
         )
     except Exception:  # noqa: BLE001 - enrichment is optional, never fatal
+        if raise_on_provider_error:
+            raise
         return entries
 
     corpus = "\n".join(material["text"] for material in materials)

@@ -116,6 +116,36 @@ render_case_query_panel(result, claim_id=result.claim.id,
             self.assertFalse(response["results"])
             self.assertTrue(response["warnings"] or response["answer"])
 
+    def test_provider_factory_is_used_only_for_natural_language_queries(self):
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_string(f'''
+import sys
+from pathlib import Path
+import streamlit as st
+sys.path.insert(0, {str(ROOT / "ui")!r})
+from case_query_panel import render_case_query_panel
+from legal_funds_agent.workflow.vertical_slice import run_demo_case
+if "result" not in st.session_state:
+    st.session_state["result"] = run_demo_case(Path({str(ROOT / "sample_data" / "demo_case_001")!r}))
+if "factory_calls" not in st.session_state:
+    st.session_state["factory_calls"] = 0
+st.session_state["provider_name"] = "deepseek"
+def provider_factory():
+    st.session_state["factory_calls"] += 1
+    raise RuntimeError("deliberate test failure")
+render_case_query_panel(
+    st.session_state["result"], key="factory_query",
+    provider_factory=provider_factory, provider_fingerprint="test-config",
+)
+''', default_timeout=20).run()
+        next(b for b in app.button if b.label == "案件概况").click().run()
+        self.assertEqual(app.session_state["factory_calls"], 0)
+        next(i for i in app.text_input if i.label == "询问当前案件").set_value("案件金额是多少？")
+        next(b for b in app.button if b.label == "查询案件事实").click().run()
+        self.assertEqual(app.session_state["factory_calls"], 1)
+        self.assertTrue(app.error)
+
 
 if __name__ == "__main__":
     unittest.main()

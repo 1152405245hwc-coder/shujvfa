@@ -38,7 +38,7 @@ from legal_funds_agent.services.evidence_conflict_service import (
     build_evidence_conflict_matrix,
     showcase_conflict_matrix,
 )
-from legal_funds_agent.services.report_service import build_report, report_to_csv, report_to_html, report_to_json
+from legal_funds_agent.services.report_service import report_to_csv, report_to_html, report_to_json
 from legal_funds_agent.parsers.file_parsers import extract_document_text, extract_transactions_csv_detailed
 from legal_funds_agent.services.review_engine import build_decision
 from legal_funds_agent.services.statement_extractor import StatementPaymentFact
@@ -50,6 +50,8 @@ from legal_funds_agent.services.transaction_analysis import (
 )
 from legal_funds_agent.workflow.vertical_slice import (
     WorkflowResult,
+    build_claim_report,
+    build_claim_review_context,
     confirm_claim_extraction,
     review_transactions,
     run_case_inputs,
@@ -1065,7 +1067,7 @@ def _json_arg(payload) -> str:
 
 @st.cache_data(show_spinner=False)
 def _cached_conflict_enrichment(entries_json: str, facts_json: str, materials_json: str,
-                                provider_name: str) -> list[dict]:
+                                provider_fingerprint: str, _provider) -> list[dict]:
     """Model enrichment for the conflict matrix, cached on content.
 
     Streamlit rerenders on every interaction, so calling the model inline would bill the
@@ -1074,17 +1076,14 @@ def _cached_conflict_enrichment(entries_json: str, facts_json: str, materials_js
     from legal_funds_agent.services.evidence_conflict_service import enrich_conflict_entries
 
     entries = json.loads(entries_json)
-    try:
-        provider = _provider_from_ui_config(provider_name)
-    except Exception:
-        return entries
     return enrich_conflict_entries(
-        entries, json.loads(facts_json), json.loads(materials_json), provider
+        entries, json.loads(facts_json), json.loads(materials_json), _provider,
+        raise_on_provider_error=True,
     )
 
 
 @st.cache_data(show_spinner=False)
-def _cached_checklist_notes(payload_json: str, provider_name: str) -> dict:
+def _cached_checklist_notes(payload_json: str, provider_fingerprint: str, _provider) -> dict:
     """Model rewording of the checklist. ``status`` is deliberately not part of the key.
 
     Returns both the wording and the audit of how it was produced, so a failed or
@@ -1092,16 +1091,14 @@ def _cached_checklist_notes(payload_json: str, provider_name: str) -> dict:
     """
     from legal_funds_agent.services.case_report_service import request_investigation_notes
 
-    try:
-        provider = _provider_from_ui_config(provider_name)
-    except Exception as exc:
-        return {"notes": {}, "report": {"checked": False, "notes": [f"PROVIDER_UNAVAILABLE:{type(exc).__name__}"]}}
-    notes, report = request_investigation_notes(json.loads(payload_json), provider)
+    notes, report = request_investigation_notes(
+        json.loads(payload_json), _provider, raise_on_provider_error=True
+    )
     return {"notes": notes, "report": report}
 
 
 @st.cache_data(show_spinner=False)
-def _cached_narrative(facts_json: str, provider_name: str) -> dict:
+def _cached_narrative(facts_json: str, provider_fingerprint: str, _provider) -> dict:
     """Model narrative over the deterministic fact pack, cached on the fact pack.
 
     Returns the narrative (possibly ``None``) plus the audit explaining why, so the page
@@ -1109,11 +1106,9 @@ def _cached_narrative(facts_json: str, provider_name: str) -> dict:
     """
     from legal_funds_agent.services.case_narrative_service import generate_narrative_from_facts
 
-    try:
-        provider = _provider_from_ui_config(provider_name)
-    except Exception as exc:
-        return {"narrative": None, "audit": {"checked": False, "notes": [f"PROVIDER_UNAVAILABLE:{type(exc).__name__}"]}}
-    narrative, audit = generate_narrative_from_facts(json.loads(facts_json), provider)
+    narrative, audit = generate_narrative_from_facts(
+        json.loads(facts_json), _provider, raise_on_provider_error=True
+    )
     return {"narrative": narrative, "audit": audit}
 
 
@@ -1139,9 +1134,14 @@ def _conflict_matrix_for(result, supplementary_documents: list[dict[str, str]]) 
     ]
     if not materials or not _model_enhancement_enabled():
         return entries
-    return _cached_conflict_enrichment(
-        _json_arg(entries), _json_arg(facts), _json_arg(materials), provider_name
-    )
+    try:
+        provider, provider_fingerprint = _provider_cache_context(provider_name)
+        return _cached_conflict_enrichment(
+            _json_arg(entries), _json_arg(facts), _json_arg(materials),
+            provider_fingerprint, provider,
+        )
+    except Exception:
+        return entries
 
 
 def _apply_model_wording(checklist: list[dict], provider_name: str) -> list[dict]:
@@ -1166,7 +1166,19 @@ def _apply_model_wording(checklist: list[dict], provider_name: str) -> list[dict
     ]
     if not payload:
         return checklist
-    outcome = _cached_checklist_notes(_json_arg(payload), provider_name)
+    try:
+        provider, provider_fingerprint = _provider_cache_context(provider_name)
+        outcome = _cached_checklist_notes(
+            _json_arg(payload), provider_fingerprint, provider
+        )
+    except Exception as exc:
+        outcome = {
+            "notes": {},
+            "report": {
+                "checked": False,
+                "notes": [f"PROVIDER_UNAVAILABLE:{type(exc).__name__}"],
+            },
+        }
     notes = outcome.get("notes") or {}
     report = outcome.get("report") or {}
     if notes:
@@ -1190,6 +1202,24 @@ def _provider_from_ui_config(provider_name: str):
         page_key = str(st.session_state.get("deepseek_api_key_input") or "").strip()
         return provider_from_environment("deepseek", api_key=page_key or DEEPSEEK_ENV_KEY)
     return provider_from_environment(provider_name)
+
+
+def _provider_cache_context(provider_name: str):
+    """Return the active provider and a non-secret fingerprint for model caches."""
+    provider = _provider_from_ui_config(provider_name)
+    if provider_name == "deepseek":
+        page_key = str(st.session_state.get("deepseek_api_key_input") or "").strip()
+        effective_key = page_key or DEEPSEEK_ENV_KEY
+        config = {
+            "provider": provider_name,
+            "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            "model": os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+            "credential_hash": hashlib.sha256(effective_key.encode("utf-8")).hexdigest(),
+        }
+    else:
+        config = {"provider": provider_name}
+    fingerprint = hashlib.sha256(_json_arg(config).encode("utf-8")).hexdigest()
+    return provider, fingerprint
 
 
 def _verify_deepseek_key(api_key: str) -> tuple[bool, str]:
@@ -1492,10 +1522,7 @@ def _restore_case_from_database(database_path: Path, case_id: str):
     human_decision = (
         first_decision if first_decision.decision_type.value == "HUMAN_CONFIRMED" else None
     )
-    report = build_report(
-        first_claim, human_decision, transactions,
-        claim_locators=[], statement_conflicts=[], duplicate_groups=duplicate_groups,
-    ) if human_decision else None
+    report = build_claim_report(result, first_claim, human_decision) if human_decision else None
     return result, human_decision, report
 
 
@@ -1582,11 +1609,11 @@ def render_stat_strip(items: list[tuple[str, str, str]]) -> None:
 
 
 def render_section_heading(number: str, title: str, subtitle: str | None = None) -> None:
-    extra = f'<span class="heading-sub">{subtitle}</span>' if subtitle else ""
+    extra = f'<span class="heading-sub">{html.escape(str(subtitle))}</span>' if subtitle else ""
     st.markdown(
         f'<div class="section-heading">'
-        f'<span class="section-kicker">{number}</span>'
-        f'<strong>{title}</strong>'
+        f'<span class="section-kicker">{html.escape(str(number))}</span>'
+        f'<strong>{html.escape(str(title))}</strong>'
         f'{extra}'
         f'</div>',
         unsafe_allow_html=True,
@@ -1617,7 +1644,15 @@ def render_status_label(label: str, tone: str = "neutral") -> str:
         cfg = STATUS_CONFIG[label]
     else:
         cfg = {"symbol": "·", "text": label, "class": f"status-{tone}"}
-    return f'<span class="accessible-status {cfg["class"]}"><span class="status-symbol">{cfg["symbol"]}</span> {cfg["text"]}</span>'
+    css_class = cfg["class"] if cfg["class"] in {
+        "status-ok", "status-partial", "status-conflict", "status-insufficient",
+        "status-excluded", "status-pending", "status-neutral",
+    } else "status-neutral"
+    return (
+        f'<span class="accessible-status {css_class}">'
+        f'<span class="status-symbol">{html.escape(str(cfg["symbol"]))}</span> '
+        f'{html.escape(str(cfg["text"]))}</span>'
+    )
 
 
 def _status_label(value: str) -> str:
@@ -1682,8 +1717,8 @@ def render_review_issue(issue_id: str, title: str, status: str, materials: list[
     st.markdown(
         f'<article class="review-issue">'
         f'<div class="issue-kicker">'
-        f'<span>02 / 冲突焦点 · {issue_id}</span>'
-        f'<span class="accessible-status status-conflict">{status}</span>'
+        f'<span>02 / 冲突焦点 · {html.escape(str(issue_id))}</span>'
+        f'<span class="accessible-status status-conflict">{html.escape(str(status))}</span>'
         f'</div>'
         f'<h3>{html.escape(title)}</h3>'
         f'<div class="issue-materials">{rows}</div>'
@@ -1750,7 +1785,11 @@ def render_claim_review_items(claims_list, result, decision) -> None:
 
         cfg = STATUS_CONFIG.get(status_val, {"symbol": "·", "text": status_val, "class": "status-neutral"})
         claim_code = f"C{idx:03d}"
-        desc = f"被害人 {html.escape(c.victim_name)} 向 {html.escape(c.alleged_recipient_name or '指定账户')} 支付涉案款项 ({c.time_start} 至 {c.time_end})"
+        desc = (
+            f"被害人 {html.escape(str(c.victim_name))} 向 "
+            f"{html.escape(str(c.alleged_recipient_name or '指定账户'))} 支付涉案款项 "
+            f"({html.escape(str(c.time_start))} 至 {html.escape(str(c.time_end))})"
+        )
 
         html_items.append(
             f'<div class="claim-item-row">'
@@ -2064,10 +2103,17 @@ def _render_case_query(
     show_heading=True,
 ) -> None:
     from case_query_panel import render_case_query_panel
+    provider_name = st.session_state.get("provider_name", "mock")
+    try:
+        _, provider_fingerprint = _provider_cache_context(provider_name)
+    except Exception:
+        provider_fingerprint = "unavailable"
     render_case_query_panel(
         result, supplementary_documents=_supplementary_documents(result),
         claim_id=claim_id, transaction_id=transaction_id, entity=entity, key=key,
         show_heading=show_heading,
+        provider_factory=lambda: _provider_from_ui_config(provider_name),
+        provider_fingerprint=provider_fingerprint,
     )
 
 
@@ -2687,8 +2733,9 @@ def _render_gold_guided_demo(guide) -> None:
 
 def case_guide_page(result) -> None:
     """Cold-start guide for judges/reviewers who do not know the case file yet."""
-    signed = "decision" in st.session_state
-    status_label = "✓ 复核已完成" if signed else "◌ 等待人工复核"
+    decisions_map, signed_count, claim_count = _case_review_completion(result)
+    signed = signed_count == claim_count
+    status_label = _case_review_status_label(result, decisions_map)
     data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "上传案件"
     render_case_masthead(
         result.claim.case_id,
@@ -2784,7 +2831,11 @@ def case_guide_page(result) -> None:
         ("当前指控金额", f"¥{total_claimed:,.2f}", "起诉书/材料主张"),
         ("解析流水", f"{len(result.transactions)} 笔", "规范化交易"),
         ("召回候选", f"{len(result.candidates)} 笔", "待人工核验"),
-        ("复核状态", "已签署" if signed else "待复核", "人工确认"),
+        (
+            "复核状态",
+            "已签署" if signed else (f"进行中 {signed_count}/{claim_count}" if signed_count else "待复核"),
+            "人工确认",
+        ),
     ])
     st.markdown(
         '<div class="review-summary"><div class="section-kicker">建议路线</div>'
@@ -2920,7 +2971,7 @@ def _render_fund_use_summary(result, claims, refund_txs) -> None:
 
 
 def transactions_page(result) -> None:
-    status_label = "◌ 等待人工复核" if "decision" not in st.session_state else "✓ 复核已完成"
+    status_label = _case_review_status_label(result)
     data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "演示案件"
     render_case_masthead(result.claim.case_id, status=status_label, data_classification=data_label, review_stage="涉案资金流水总台账")
     _render_demo_context_bar()
@@ -3134,22 +3185,50 @@ def _claim_label_for(claims_list, claim) -> str:
     return f"主张{index}（{claim.victim_name} ➔ {claim.alleged_recipient_name or '待确认'}）"
 
 
-def _render_multi_claim_progress(result, claims_list) -> None:
-    """多主张案件进度横幅：未核准 / 未签署的主张用红色明示，防止只办一笔就收尾。
+def _is_human_confirmed_decision(decision) -> bool:
+    dtype = getattr(decision, "decision_type", None)
+    return str(getattr(dtype, "value", dtype or "")) == "HUMAN_CONFIRMED"
 
-    签署状态以「人工确认（HUMAN_CONFIRMED）版本的复核决定」为准：会话内当前决定优先，
-    本地快照库只读查询补齐其余主张，不创建或写入数据库。
-    """
+
+def _load_case_review_decisions(result):
     from case_query_panel import load_query_review_state
 
     decisions_map, _ = load_query_review_state(
         result, st.session_state.get("repository_path"), st.session_state.get("decision")
     )
+    return decisions_map
+
+
+def _case_review_completion(result, decisions_map=None):
+    claims_list = result.claims if result.claims else [result.claim]
+    decisions_map = decisions_map if decisions_map is not None else _load_case_review_decisions(result)
+    signed_count = sum(
+        claim.extraction_status == "human_confirmed"
+        and _is_human_confirmed_decision(decisions_map.get(claim.id))
+        for claim in claims_list
+    )
+    return decisions_map, signed_count, len(claims_list)
+
+
+def _case_review_status_label(result, decisions_map=None) -> str:
+    _, signed_count, claim_count = _case_review_completion(result, decisions_map)
+    if signed_count == claim_count:
+        return "✓ 复核已完成"
+    if signed_count:
+        return f"◌ 复核进行中 {signed_count}/{claim_count}"
+    return "◌ 等待人工复核"
+
+
+def _render_multi_claim_progress(result, claims_list, decisions_map=None) -> None:
+    """多主张案件进度横幅：未核准 / 未签署的主张用红色明示，防止只办一笔就收尾。
+
+    签署状态以「人工确认（HUMAN_CONFIRMED）版本的复核决定」为准：会话内当前决定优先，
+    本地快照库只读查询补齐其余主张，不创建或写入数据库。
+    """
+    decisions_map = decisions_map if decisions_map is not None else _load_case_review_decisions(result)
 
     def is_signed(claim) -> bool:
-        decision = decisions_map.get(claim.id)
-        dtype = getattr(decision, "decision_type", None)
-        return str(getattr(dtype, "value", dtype or "")) == "HUMAN_CONFIRMED"
+        return _is_human_confirmed_decision(decisions_map.get(claim.id))
 
     unconfirmed = [c for c in claims_list if c.extraction_status != "human_confirmed"]
     unsigned = [c for c in claims_list if c.extraction_status == "human_confirmed" and not is_signed(c)]
@@ -3169,10 +3248,11 @@ def _render_multi_claim_progress(result, claims_list) -> None:
     if unsigned:
         parts.append("已核准但尚未完成流水核验签署：" + "、".join(_claim_label_for(claims_list, c) for c in unsigned))
     done_count = len(claims_list) - len(unconfirmed) - len(unsigned)
+    progress_detail = html.escape("；".join(parts))
     st.markdown(
         f'<div class="accessible-notice danger"><span class="notice-icon">!</span> '
         f'<strong>多主张案件进度提醒：</strong>本案共 {len(claims_list)} 笔起诉主张，仅 {done_count} 笔完成核验签署。'
-        f'{"；".join(parts)}。每笔主张都需单独核准并签署，请通过下方主张选择器逐笔切换处理；'
+        f'{progress_detail}。每笔主张都需单独核准并签署，请通过下方主张选择器逐笔切换处理；'
         '未全部完成前，导出的底稿不构成全案结论。</div>',
         unsafe_allow_html=True,
     )
@@ -3180,13 +3260,39 @@ def _render_multi_claim_progress(result, claims_list) -> None:
 
 
 def review_page(result) -> None:
-    status_label = "◌ 等待人工复核" if "decision" not in st.session_state else "✓ 复核已完成"
+    claims_list = result.claims if result.claims else [result.claim]
+    decisions_map = _load_case_review_decisions(result)
+    status_label = _case_review_status_label(result, decisions_map)
     data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "演示案件"
     render_case_masthead(result.claim.case_id, status=status_label, data_classification=data_label, review_stage="资金证据核验与人工复核")
     _render_demo_context_bar()
-    claims_list = result.claims if result.claims else [result.claim]
+    st.markdown(
+        '<div id="review-claim-selector-anchor" style="scroll-margin-top:24px;"></div>',
+        unsafe_allow_html=True,
+    )
+    if st.session_state.pop("scroll_to_review_claim_selector", False):
+        components_v1.html(
+            """
+            <script>
+            (function() {
+              try {
+                var target = window.parent.document.getElementById('review-claim-selector-anchor');
+                if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
+              } catch (err) { /* iframe access is best-effort only */ }
+            })();
+            </script>
+            """,
+            height=0,
+        )
+    next_pending = []
+    signed_notice = None
+    next_label = None
+    target_claim = None
+    target_step = None
     if len(claims_list) > 1:
-        remaining_unconfirmed, remaining_unsigned = _render_multi_claim_progress(result, claims_list)
+        remaining_unconfirmed, remaining_unsigned = _render_multi_claim_progress(
+            result, claims_list, decisions_map
+        )
         claim_map = {
             f"主张 {idx + 1}：{c.victim_name} ➔ {c.alleged_recipient_name or '待确认'} (¥{c.claimed_amount:,.2f}) [{c.id}]": c
             for idx, c in enumerate(claims_list)
@@ -3209,8 +3315,10 @@ def review_page(result) -> None:
                 target_claim = next_pending[0]
                 target_step = "请先核准起诉事实，再逐笔核验流水。" if target_claim in remaining_unconfirmed else "起诉事实已核准，请完成流水核验并签署。"
 
-                def _jump_to_pending(label=next_label, claim=target_claim, step=target_step):
+                def _jump_to_pending(label=next_label, claim=target_claim, step=target_step, scroll=False):
                     st.session_state["review_claim_selector"] = label
+                    if scroll:
+                        st.session_state["scroll_to_review_claim_selector"] = True
                     _queue_toast(f"已切换到「{_claim_label_for(claims_list, claim)}」。{step}", icon="➡️")
 
                 st.button(
@@ -3223,15 +3331,15 @@ def review_page(result) -> None:
             "选择当前核验的涉案付款事实主张", list(claim_map.keys()), key="review_claim_selector"
         )
         claim = claim_map[selected_key]
-        candidates = result.candidates_by_claim.get(claim.id, [])
-        sys_decision = result.system_decisions_by_claim.get(claim.id, result.system_decision)
     else:
         claim = result.claim
-        candidates = result.candidates
-        sys_decision = result.system_decision
+
+    claim_context = build_claim_review_context(result, claim, decisions_map)
+    candidates = claim_context.candidates
+    sys_decision = claim_context.system_decision
 
     is_claim_confirmed = (claim.extraction_status == "human_confirmed")
-    is_decision_made = ("decision" in st.session_state and getattr(st.session_state.decision, "claim_id", None) == claim.id)
+    is_decision_made = claim_context.latest_human_decision is not None
 
     # 步骤指引导航条
     render_review_step_indicator(is_claim_confirmed, is_decision_made, is_decision_made)
@@ -3269,7 +3377,7 @@ def review_page(result) -> None:
             ("指控涉案金额", f"¥{claim.claimed_amount:,.2f}", "起诉书主张事实"),
             ("召回候选流水", f"{len(candidates):02d}", "银行流水匹配项"),
             ("当前核验状态", _status_label(sys_decision.status.value), "系统建议状态"),
-            ("材料冲突标记", f"{len(result.statement_conflicts):02d}", "审查阻断项"),
+            ("材料冲突标记", f"{len(claim_context.statement_conflicts):02d}", "审查阻断项"),
         ])
 
     render_section_heading("01 / 事实主张", "起诉事实主张概貌", f"事实主张编号: {claim.id}")
@@ -3278,15 +3386,16 @@ def review_page(result) -> None:
         f'<div class="claim-editorial-kicker">起诉书主张 · 涉案金额</div>'
         f'<div class="claim-editorial-amount">¥{claim.claimed_amount:,.2f}</div>'
         f'<p class="claim-editorial-desc">'
-        f'起诉指控：被害人 <strong>{claim.victim_name}</strong> 于 {claim.time_start} 至 {claim.time_end} '
-        f'按照嫌疑人指示向 <strong>{claim.alleged_recipient_name or "指定涉案账户"}</strong> 支付款项。'
+        f'起诉指控：被害人 <strong>{html.escape(str(claim.victim_name))}</strong> 于 '
+        f'{html.escape(str(claim.time_start))} 至 {html.escape(str(claim.time_end))} '
+        f'按照嫌疑人指示向 <strong>{html.escape(str(claim.alleged_recipient_name or "指定涉案账户"))}</strong> 支付款项。'
         f'</p>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
     with st.expander("查看起诉书事实主张原文出处与字符偏移", expanded=False):
-        for locator in result.claim_locators:
+        for locator in claim_context.source_locators:
             render_source_quote("起诉书", locator.source_text or "（无原文片段）", f"{locator.evidence_id} · 字符 {locator.start_offset}–{locator.end_offset}")
 
     # 步骤一：核准事实主张
@@ -3321,10 +3430,13 @@ def review_page(result) -> None:
         '<strong>步骤一已完成：</strong>该涉案付款事实主张已由办案经办人员人工审核批准。</div>',
         unsafe_allow_html=True,
     )
-    if result.statement_conflicts:
+    if claim_context.statement_conflicts:
+        conflict_labels = html.escape(
+            "、".join(RISK_LABELS.get(r, r) for r in claim_context.statement_conflicts)
+        )
         st.markdown(
             f'<div class="accessible-notice danger"><span class="notice-icon">!</span> '
-            f'<strong>被害人陈述冲突：</strong>笔录与起诉书存在矛盾（{"、".join([RISK_LABELS.get(r, r) for r in result.statement_conflicts])}）。</div>',
+            f'<strong>被害人陈述冲突：</strong>笔录与起诉书存在矛盾（{conflict_labels}）。</div>',
             unsafe_allow_html=True,
         )
     elif "RESTORED_STATEMENT_NOT_AVAILABLE" in result.statement_extraction_warnings:
@@ -3623,46 +3735,30 @@ def review_page(result) -> None:
                     reason_code=REASON_CN.get(row.get("认定理由"), "OTHER"),
                     note=str(row.get("经办备注") or "").strip() or None,
                 ) for row in edited_records]
-                # 版本链只对同一主张续接：会话里保存的可能是另一主张的已签署决定，
-                # 跨主张直接传入会触发 SUPERSEDES_CLAIM_MISMATCH，此处按主张过滤。
-                prior_decision = st.session_state.get("decision")
-                supersedes = (
-                    prior_decision
-                    if prior_decision is not None and getattr(prior_decision, "claim_id", None) == claim.id
-                    else None
-                )
+                # 版本链只续接当前主张在会话或数据库中的最新人工决定。
+                supersedes = claim_context.latest_human_decision
                 decision, report = review_transactions(
                     result, actions, reviewer=reviewer.strip(),
                     claim_id=claim.id,
                     note=note.strip() or None,
                     supersedes=supersedes,
                 )
-                st.session_state.decision = decision
-                st.session_state.report = report
                 repository_path = st.session_state.get("repository_path")
                 checkpoint_created = not repository_path
                 if repository_path:
                     saved_decision = _save_human_review(repository_path, decision, result.audit_events[-2:])
                     if saved_decision.id != decision.id or saved_decision.model_dump(mode="json") != decision.model_dump(mode="json"):
                         decision = saved_decision
-                        report = build_report(
-                            result.claim, decision, result.transactions,
-                            claim_locators=result.claim_locators,
-                            statement_conflicts=result.statement_conflicts,
-                            duplicate_groups=result.duplicate_groups,
-                        )
+                        report = build_claim_report(result, claim, decision)
                 else:
                     repository_path = _persist_result(result, audit_events=result.audit_events[:-2])
                     st.session_state.repository_path = repository_path
                     saved_decision = _save_human_review(repository_path, decision, result.audit_events[-2:])
                     if saved_decision.id != decision.id or saved_decision.model_dump(mode="json") != decision.model_dump(mode="json"):
                         decision = saved_decision
-                        report = build_report(
-                            result.claim, decision, result.transactions,
-                            claim_locators=result.claim_locators,
-                            statement_conflicts=result.statement_conflicts,
-                            duplicate_groups=result.duplicate_groups,
-                        )
+                        report = build_claim_report(result, claim, decision)
+                st.session_state.decision = decision
+                st.session_state.report = report
                 st.query_params["case_id"] = result.claim.case_id
                 if checkpoint_created:
                     st.info("签署后的脱敏案件快照已保存到本机 SQLite；页面刷新后可自动恢复当前案件。")
@@ -3690,10 +3786,43 @@ def review_page(result) -> None:
                     error_text = "该复核版本已存在且内容不同；请载入最新案件后再签署新的复核版本。"
                 st.error(f"复核确认未保存：{error_text}")
 
+    if signed_notice and next_pending and next_label and target_claim and target_step:
+        continue_info, continue_action = st.columns([3, 1.2], vertical_alignment="center")
+        with continue_info:
+            st.info(
+                f"当前主张已保存。下一步：{_claim_label_for(claims_list, target_claim)}。"
+                "可直接切换并返回顶部继续核验。"
+            )
+        with continue_action:
+            st.button(
+                "↑ 继续处理下一笔主张",
+                type="primary",
+                use_container_width=True,
+                key="continue_next_pending_claim",
+                on_click=_jump_to_pending,
+                kwargs={"scroll": True},
+            )
+    elif signed_notice and len(claims_list) > 1 and not next_pending:
+        complete_info, complete_action = st.columns([3, 1.2], vertical_alignment="center")
+        with complete_info:
+            st.success("全部主张均已完成核验签署，可进入审查底稿页查看全案汇总、审计留痕与导出文件。")
+        with complete_action:
+            def _go_to_audit_after_review():
+                st.session_state["nav_page"] = PAGE_AUDIT
+                st.session_state["review_complete_jump"] = True
+
+            st.button(
+                "前往 04 审查底稿留痕",
+                type="primary",
+                use_container_width=True,
+                key="go_to_audit_after_all_claims",
+                on_click=_go_to_audit_after_review,
+            )
+
 
 def evidence_graph_page(result) -> None:
     """案件关系图：人—账户—主张—材料的关联视图，与资金流向图分工不重复。"""
-    status_label = "◌ 等待人工复核" if "decision" not in st.session_state else "✓ 复核已完成"
+    status_label = _case_review_status_label(result)
     data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "演示案件"
     render_case_masthead(result.claim.case_id, status=status_label, data_classification=data_label, review_stage="案件关系图")
     _render_demo_context_bar()
@@ -3839,7 +3968,7 @@ def evidence_graph_page(result) -> None:
 
 
 def audit_page(result) -> None:
-    status_label = "✓ 复核已完成" if st.session_state.get("decision") else "◌ 等待人工复核"
+    status_label = _case_review_status_label(result)
     data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "演示案件"
     render_case_masthead(result.claim.case_id, status=status_label, data_classification=data_label, review_stage="审查底稿与审计留痕")
     _render_demo_context_bar()
@@ -3890,7 +4019,11 @@ def audit_page(result) -> None:
         ("复核版本", f"v{decision.version}", "防静默篡改底稿编号"),
     ])
     render_review_summary("资金证据核验结论", f"当前材料中，已人工纳入流水 {len(decision.included_transaction_ids)} 笔，共计人民币 ¥{decision.covered_amount:,.2f}；尚未覆盖 ¥{decision.uncovered_amount:,.2f}。复核人：{decision.reviewer or '未填写'}。")
-    st.markdown('<div class="legal-notice"><strong>法律效力提示：</strong>' + report["disclaimer"] + '</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="legal-notice"><strong>法律效力提示：</strong>'
+        + html.escape(str(report["disclaimer"])) + '</div>',
+        unsafe_allow_html=True,
+    )
     json_text = report_to_json(report)
     csv_text = report_to_csv(report)
     html_text = report_to_html(report)
@@ -3995,9 +4128,21 @@ def audit_page(result) -> None:
             narrative_body_html,
         )
 
-        narrative_outcome = _cached_narrative(
-            _json_arg(build_narrative_facts(master_rep)), provider_name
-        )
+        try:
+            provider, provider_fingerprint = _provider_cache_context(provider_name)
+            narrative_outcome = _cached_narrative(
+                _json_arg(build_narrative_facts(master_rep)),
+                provider_fingerprint,
+                provider,
+            )
+        except Exception as exc:
+            narrative_outcome = {
+                "narrative": None,
+                "audit": {
+                    "checked": False,
+                    "notes": [f"PROVIDER_UNAVAILABLE:{type(exc).__name__}"],
+                },
+            }
         if narrative_outcome.get("narrative"):
             master_rep["narrative"] = narrative_outcome["narrative"]
             st.caption("模型增强：全案审查意见摘要已生成，随底稿 HTML 导出。")
@@ -4028,7 +4173,7 @@ def audit_page(result) -> None:
     col_btn2.download_button(
         "导出当前主张复核底稿（HTML）",
         html_text,
-        file_name=f"{result.claim.case_id}-{result.claim.id}-审查底稿.html",
+        file_name=f"{decision.case_id}-{decision.claim_id}-审查底稿.html",
         mime="text/html",
         width="stretch",
     )
@@ -4073,10 +4218,15 @@ st.sidebar.markdown('<div class="section-kicker" style="margin-top:8px;">当前�
 if sidebar_result is None:
     st.sidebar.markdown('<span class="accessible-status status-insufficient"><span class="status-symbol">—</span> 尚未加载案件</span>', unsafe_allow_html=True)
 else:
-    signed = "decision" in st.session_state
+    sidebar_decisions, signed_count, claim_count = _case_review_completion(sidebar_result)
+    signed = signed_count == claim_count
     status_cls = "status-ok" if signed else "status-pending"
     status_sym = "✓" if signed else "◌"
-    status_txt = "复核已签署完成" if signed else "等待人工复核"
+    status_txt = (
+        "复核已签署完成"
+        if signed
+        else (f"复核进行中（{signed_count}/{claim_count}）" if signed_count else "等待人工复核")
+    )
     st.sidebar.markdown(
         f'<span class="accessible-status {status_cls}"><span class="status-symbol">{status_sym}</span> {status_txt}</span>',
         unsafe_allow_html=True,
@@ -4084,8 +4234,11 @@ else:
     active_case_id = sidebar_result.claim.case_id
     active_display = case_display_names.get(active_case_id)
     st.sidebar.caption(f"案件：{active_display}（{active_case_id}）" if active_display else f"案件编号：{active_case_id}")
-    if signed:
-        st.sidebar.caption(f"底稿版本 v{st.session_state.decision.version}")
+    if signed and claim_count == 1:
+        only_claim = (sidebar_result.claims or [sidebar_result.claim])[0]
+        st.sidebar.caption(f"底稿版本 v{sidebar_decisions[only_claim.id].version}")
+    elif claim_count > 1:
+        st.sidebar.caption(f"已签署 {signed_count}/{claim_count} 笔主张")
     with st.sidebar.popover("重命名当前案件", use_container_width=True):
         new_name = st.text_input(
             "案件显示名（仅展示用途，案件编号不变）",

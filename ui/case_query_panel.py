@@ -85,7 +85,8 @@ def collect_query_sources(value):
 
 def render_case_query_panel(result, *, supplementary_documents=None, claim_id=None,
                             transaction_id=None, entity=None, key="case_query",
-                            show_heading=True):
+                            show_heading=True, provider_factory=None,
+                            provider_fingerprint=""):
     case_id = result.claim.case_id
     documents = supplementary_documents or []
     provider_name = st.session_state.get("provider_name", "mock")
@@ -104,7 +105,8 @@ def render_case_query_panel(result, *, supplementary_documents=None, claim_id=No
         st.error("当前案件的查询快照无法读取；请恢复案件后重试。为避免遗漏已签署状态，本次未查询。")
         return
     selection = {"claim_id": claim_id, "transaction_id": transaction_id, "entity": entity}
-    fingerprint = query_snapshot_key(result, decisions, documents, statuses, selection, provider_name)
+    fingerprint = query_snapshot_key(result, decisions, documents, statuses, selection,
+                                     f"{provider_name}:{provider_fingerprint}")
     answer_key = f"{panel_key}_answer"
     saved = st.session_state.get(answer_key)
     if saved and saved["fingerprint"] != fingerprint:
@@ -170,7 +172,13 @@ def render_case_query_panel(result, *, supplementary_documents=None, claim_id=No
         question, tool, args = request
         with st.spinner("正在校验查询范围并读取案件依据…"):
             try:
-                provider = provider_from_environment(provider_name) if tool is None else None
+                provider = None
+                if tool is None:
+                    provider = (
+                        provider_factory()
+                        if provider_factory is not None
+                        else provider_from_environment(provider_name)
+                    )
                 response = run_case_query(context, question, provider, tool_name=tool, arguments=args)
             except Exception:
                 # Never expose provider credentials, raw API response, or filesystem details.
