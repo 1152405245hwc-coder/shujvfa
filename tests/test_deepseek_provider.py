@@ -1,8 +1,11 @@
 import json
+import os
 import unittest
 import urllib.error
+from unittest.mock import patch
 
 from legal_funds_agent.llm.deepseek_provider import DeepSeekProvider
+from legal_funds_agent.llm.factory import provider_from_environment
 
 
 class FakeResponse:
@@ -20,6 +23,12 @@ class FakeResponse:
 
 
 class DeepSeekProviderTest(unittest.TestCase):
+    def test_factory_session_key_override_does_not_mutate_environment(self):
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "environment-key"}):
+            provider = provider_from_environment("deepseek", api_key="session-key")
+            self.assertEqual(provider.api_key, "session-key")
+            self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "environment-key")
+
     def test_structured_response_is_parsed_without_network(self):
         captured = {}
 

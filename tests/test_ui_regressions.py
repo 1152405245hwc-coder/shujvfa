@@ -130,19 +130,71 @@ class DeepSeekKeyConfigTest(unittest.TestCase):
         self.assertIn('key="test_deepseek_connection"', source)
         self.assertIn("verify_connection()", source)
 
-    def test_key_is_auto_verified_when_entered(self):
+    def test_key_waits_for_explicit_test_click(self):
         source = APP_PATH.read_text(encoding="utf-8")
-        self.assertIn("Auto-verify each new key", source)
-        self.assertIn('st.session_state.get("deepseek_key_verified")', source)
-        self.assertIn("_verify_deepseek_key()", source)
-        # 结果紧跟输入框下方，不需用户点按钮就能看到连接状态
-        self.assertIn("st.success(message)", source)
-        self.assertIn("st.warning(message)", source)
+        start = source.index("@st.fragment\ndef _render_deepseek_key_config")
+        end = source.index("# Truthy spellings accepted", start)
+        config = source[start:end]
+        self.assertNotIn("Auto-verify", config)
+        self.assertIn('test_clicked = st.button(', config)
+        self.assertIn('if test_clicked:', config)
+        self.assertEqual(config.count("_run_deepseek_connection_check(effective_key)"), 1)
+        self.assertNotIn("点击【测试连接】后才会发起校验", config)
+
+    def test_empty_key_click_shows_validation_without_disabling_button(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        start = source.index("@st.fragment\ndef _render_deepseek_key_config")
+        end = source.index("# Truthy spellings accepted", start)
+        config = source[start:end]
+        self.assertNotIn("disabled=not bool(effective_key)", config)
+        self.assertIn("if not effective_key:", config)
+        self.assertIn('connection_result.warning("请先输入 DeepSeek 接口密钥。")', config)
+
+    def test_streamlit_stop_widget_is_hidden_in_favor_of_local_status(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn('[data-testid="stStatusWidget"]', source)
+
+    def test_new_key_clears_previous_connection_result(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        start = source.index("@st.fragment\ndef _render_deepseek_key_config")
+        end = source.index("# Truthy spellings accepted", start)
+        config = source[start:end]
+        self.assertIn('previous_candidate != effective_key', config)
+        self.assertIn('st.session_state.pop("deepseek_key_status", None)', config)
+        self.assertIn('connection_result = st.empty()', config)
+        self.assertIn('with connection_result.container():', config)
+
+    def test_connection_check_uses_local_fragment_and_compact_status(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        fragment_pos = source.index("@st.fragment\ndef _render_deepseek_key_config")
+        config_call_pos = source.index("        _render_deepseek_key_config()")
+        self.assertLess(fragment_pos, config_call_pos)
+        self.assertIn('st.status("正在测试 DeepSeek 连接……", expanded=False)', source)
+        self.assertNotIn('key="retest_deepseek_connection"', source)
+
+    def test_clear_key_uses_pre_rerun_callback_and_resets_widget_value(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        start = source.index("def _clear_deepseek_key_config()")
+        end = source.index("@st.fragment", start)
+        clear_callback = source[start:end]
+        self.assertIn('st.session_state["deepseek_api_key_input"] = ""', clear_callback)
+        self.assertIn('st.session_state.pop("deepseek_key_candidate", None)', clear_callback)
+        self.assertIn('st.session_state.pop("deepseek_key_status", None)', clear_callback)
+        self.assertIn('on_click=_clear_deepseek_key_config', source)
 
     def test_container_injected_key_stays_as_fallback(self):
         source = APP_PATH.read_text(encoding="utf-8")
         self.assertIn('DEEPSEEK_ENV_KEY = os.environ.get("DEEPSEEK_API_KEY", "")', source)
-        self.assertIn('os.environ["DEEPSEEK_API_KEY"] = DEEPSEEK_ENV_KEY', source)
+        self.assertIn('page_key or DEEPSEEK_ENV_KEY', source)
+        self.assertIn('"运行环境变量" if DEEPSEEK_ENV_KEY', source)
+
+    def test_page_key_is_not_written_to_process_environment(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertNotIn('os.environ["DEEPSEEK_API_KEY"] = page_key', source)
+        self.assertIn(
+            'provider_from_environment("deepseek", api_key=page_key or DEEPSEEK_ENV_KEY)',
+            source,
+        )
 
     def test_missing_key_error_is_actionable(self):
         source = APP_PATH.read_text(encoding="utf-8")
@@ -171,6 +223,33 @@ class ReviewFlowRegressionTest(unittest.TestCase):
         self.assertIn('st.session_state["parse_notice"]', source)
         self.assertIn('st.session_state["nav_page"] = PAGE_REVIEW', source)
         self.assertIn('st.session_state.pop("parse_notice", None)', source)
+
+    def test_uploaded_case_parse_has_provider_specific_running_feedback(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        start = source.index('if st.button("开始解析案卷"')
+        end = source.index('        st.caption("从本地 SQLite 数据库中调阅', start)
+        upload_flow = source[start:end]
+
+        status_pos = upload_flow.index("parse_status = st.status(")
+        run_pos = upload_flow.index("result = run_case_inputs(")
+        self.assertLess(status_pos, run_pos)
+        self.assertIn('if provider_name == "deepseek":', upload_flow)
+        self.assertIn("正在等待 DeepSeek 返回结构化解析结果", upload_flow)
+        self.assertIn("请勿重复提交或刷新页面", upload_flow)
+        self.assertIn("正在执行本地模拟解析与证据核验", upload_flow)
+
+    def test_uploaded_case_parse_closes_status_on_success_and_failure(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        start = source.index('if st.button("开始解析案卷"')
+        end = source.index('        st.caption("从本地 SQLite 数据库中调阅', start)
+        upload_flow = source[start:end]
+
+        self.assertIn('label="案卷解析完成，正在进入资金证据核验"', upload_flow)
+        self.assertIn('state="complete"', upload_flow)
+        self.assertIn('label="案卷解析未完成"', upload_flow)
+        self.assertIn('state="error"', upload_flow)
+        self.assertIn('st.session_state["nav_page"] = PAGE_REVIEW', upload_flow)
+        self.assertIn("st.session_state.failed_audit_events", upload_flow)
 
     def test_batch_toolbar_appears_once_with_task_framing(self):
         source = APP_PATH.read_text(encoding="utf-8")

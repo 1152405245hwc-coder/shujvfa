@@ -126,7 +126,9 @@ section.main > div {
 }
 
 /* Hide default streamlit clutter */
-[data-testid="stAppDeployButton"], [data-testid="stMainMenuButton"] {
+[data-testid="stAppDeployButton"],
+[data-testid="stMainMenuButton"],
+[data-testid="stStatusWidget"] {
     display: none !important;
 }
 /* Hide the auto anchor-link icon (🔗) that Streamlit 1.62 adds next to headings */
@@ -1073,7 +1075,7 @@ def _cached_conflict_enrichment(entries_json: str, facts_json: str, materials_js
 
     entries = json.loads(entries_json)
     try:
-        provider = provider_from_environment(provider_name)
+        provider = _provider_from_ui_config(provider_name)
     except Exception:
         return entries
     return enrich_conflict_entries(
@@ -1091,7 +1093,7 @@ def _cached_checklist_notes(payload_json: str, provider_name: str) -> dict:
     from legal_funds_agent.services.case_report_service import request_investigation_notes
 
     try:
-        provider = provider_from_environment(provider_name)
+        provider = _provider_from_ui_config(provider_name)
     except Exception as exc:
         return {"notes": {}, "report": {"checked": False, "notes": [f"PROVIDER_UNAVAILABLE:{type(exc).__name__}"]}}
     notes, report = request_investigation_notes(json.loads(payload_json), provider)
@@ -1108,7 +1110,7 @@ def _cached_narrative(facts_json: str, provider_name: str) -> dict:
     from legal_funds_agent.services.case_narrative_service import generate_narrative_from_facts
 
     try:
-        provider = provider_from_environment(provider_name)
+        provider = _provider_from_ui_config(provider_name)
     except Exception as exc:
         return {"narrative": None, "audit": {"checked": False, "notes": [f"PROVIDER_UNAVAILABLE:{type(exc).__name__}"]}}
     narrative, audit = generate_narrative_from_facts(json.loads(facts_json), provider)
@@ -1182,14 +1184,100 @@ def _model_enhancement_enabled() -> bool:
 PROVIDER_CHOICES = ["mock", "deepseek"]
 
 
-def _verify_deepseek_key() -> tuple[bool, str]:
-    """Run a lightweight reachability/auth check against the active DEEPSEEK_API_KEY."""
+def _provider_from_ui_config(provider_name: str):
+    """Build a provider without promoting a session key into process environment."""
+    if provider_name == "deepseek":
+        page_key = str(st.session_state.get("deepseek_api_key_input") or "").strip()
+        return provider_from_environment("deepseek", api_key=page_key or DEEPSEEK_ENV_KEY)
+    return provider_from_environment(provider_name)
+
+
+def _verify_deepseek_key(api_key: str) -> tuple[bool, str]:
+    """Run a lightweight reachability/auth check against the supplied session key."""
     try:
-        provider = provider_from_environment("deepseek")
+        provider = provider_from_environment("deepseek", api_key=api_key)
         return provider.verify_connection()
     except Exception as exc:
         return False, f"无法创建 DeepSeek 客户端：{type(exc).__name__}"
 
+
+def _run_deepseek_connection_check(effective_key: str) -> tuple[bool, str]:
+    """Verify the active key while showing a compact running indicator."""
+    connection_status = st.status("正在测试 DeepSeek 连接……", expanded=False)
+    ok, message = _verify_deepseek_key(effective_key)
+    st.session_state["deepseek_key_status"] = (ok, message, effective_key)
+    st.session_state["deepseek_key_verified"] = effective_key
+    connection_status.update(
+        label=message,
+        state="complete" if ok else "error",
+        expanded=False,
+    )
+    return ok, message
+
+
+def _clear_deepseek_key_config() -> None:
+    """Clear the key widget and its derived connection state before rerendering."""
+    st.session_state["deepseek_api_key_input"] = ""
+    st.session_state.pop("deepseek_key_candidate", None)
+    st.session_state.pop("deepseek_key_status", None)
+    st.session_state.pop("deepseek_key_verified", None)
+
+
+@st.fragment
+def _render_deepseek_key_config() -> None:
+    """Render key controls locally so a network check does not dim the full page."""
+    entered_key = st.text_input(
+        "DeepSeek 接口密钥（仅本次会话）",
+        key="deepseek_api_key_input",
+        type="password",
+        help=(
+            "可在页面粘贴密钥立即使用，无需重启容器；"
+            "密钥只保存在浏览器会话与容器内存中，不写入磁盘、数据库或导出文件。"
+        ),
+    )
+    page_key = entered_key.strip()
+    key_source = "页面输入" if page_key else ("运行环境变量" if DEEPSEEK_ENV_KEY else "未配置")
+    st.caption(f"密钥来源：{key_source}")
+
+    effective_key = page_key or DEEPSEEK_ENV_KEY
+    previous_candidate = st.session_state.get("deepseek_key_candidate")
+    if previous_candidate != effective_key:
+        # A newly entered key has not been tested yet. Never carry a success or
+        # failure result over from the previous candidate.
+        st.session_state["deepseek_key_candidate"] = effective_key
+        st.session_state.pop("deepseek_key_status", None)
+        st.session_state.pop("deepseek_key_verified", None)
+
+    connection_result = st.empty()
+    col_key_test, col_key_clear = st.columns(2)
+    with col_key_test:
+        test_clicked = st.button(
+            "测试连接",
+            use_container_width=True,
+            key="test_deepseek_connection",
+        )
+    with col_key_clear:
+        st.button(
+            "清除页面输入",
+            use_container_width=True,
+            key="clear_deepseek_key",
+            on_click=_clear_deepseek_key_config,
+        )
+
+    if test_clicked:
+        if not effective_key:
+            connection_result.warning("请先输入 DeepSeek 接口密钥。")
+        else:
+            with connection_result.container():
+                _run_deepseek_connection_check(effective_key)
+    else:
+        status = st.session_state.get("deepseek_key_status")
+        if status and status[2] == effective_key:
+            (ok, message, _) = status
+            if ok:
+                connection_result.success(message)
+            else:
+                connection_result.warning(message)
 # Truthy spellings accepted by the ``?enhance=`` URL override.
 TRUTHY_QUERY_VALUES = {"1", "true", "yes"}
 
@@ -2056,7 +2144,7 @@ def _run_gold_case(*, provider_name: str, enable_claim_audit: bool, persist_loca
                 )
 
             st.write("4. 运行事实主张抽取与确定性资金穿透对账引擎...")
-            provider = provider_from_environment(provider_name)
+            provider = _provider_from_ui_config(provider_name)
             result = run_case_inputs(
                 indictment_text=indictment_text,
                 statement_text=statement_text,
@@ -2322,6 +2410,11 @@ def _materials_panel(active_case_id: str) -> None:
             supplementary = supplementary_files
             transactions = bank_files[0]
             st.query_params.pop("case_id", None)
+            parse_status = st.status(
+                "正在读取案卷材料……",
+                expanded=True,
+            )
+            parse_status.write("✓ 案卷材料已接收")
             try:
                 indictment_text = extract_document_text(indictment.getvalue(), filename=indictment.name)
                 statement_text = "\n\n".join(
@@ -2332,7 +2425,7 @@ def _materials_panel(active_case_id: str) -> None:
                     {"filename": item.name, "text": extract_document_text(item.getvalue(), filename=item.name)}
                     for item in (supplementary or [])
                 ]
-                provider = provider_from_environment(provider_name)
+                provider = _provider_from_ui_config(provider_name)
                 csv_text, csv_skip_stats = extract_transactions_csv_detailed(transactions.getvalue(), filename=transactions.name)
                 total_skipped = sum(csv_skip_stats.values())
                 if total_skipped > 0:
@@ -2343,6 +2436,23 @@ def _materials_panel(active_case_id: str) -> None:
                         f"金额或对手方缺失 {csv_skip_stats.get('invalid_amount_or_counterparty', 0)} 行，"
                         f"请核对原始文件。"
                     )
+                if provider_name == "deepseek":
+                    parse_status.update(
+                        label="AI 正在解析案件材料，请耐心等待……",
+                        state="running",
+                        expanded=True,
+                    )
+                    parse_status.write("◉ 正在等待 DeepSeek 返回结构化解析结果……")
+                    parse_status.caption(
+                        "响应时间受网络和模型服务状态影响，请勿重复提交或刷新页面。"
+                    )
+                else:
+                    parse_status.update(
+                        label="正在执行本地模拟解析与证据核验……",
+                        state="running",
+                        expanded=True,
+                    )
+                    parse_status.write("◉ 正在提取案件事实并执行确定性资金核验……")
                 result = run_case_inputs(
                     indictment_text=indictment_text,
                     statement_text=statement_text,
@@ -2356,6 +2466,11 @@ def _materials_panel(active_case_id: str) -> None:
                     audit_provider=provider,
                     allow_missing_statement=True,
                     transaction_evidence_id=f"EVI-BANK-{transactions.name.rsplit('.', 1)[-1].upper()}",
+                )
+                parse_status.update(
+                    label="案卷解析完成，正在进入资金证据核验",
+                    state="complete",
+                    expanded=False,
                 )
                 st.session_state.result = result
                 st.session_state.supplementary_documents = supplementary_records
@@ -2372,6 +2487,11 @@ def _materials_panel(active_case_id: str) -> None:
                 st.session_state["nav_page"] = PAGE_REVIEW
                 st.rerun()
             except Exception as exc:
+                parse_status.update(
+                    label="案卷解析未完成",
+                    state="error",
+                    expanded=True,
+                )
                 st.session_state.failed_audit_events = getattr(exc, "audit_events", [])
                 st.error(f"材料处理失败：{exc}")
     else:
@@ -4062,61 +4182,7 @@ with st.sidebar.expander("⚙ 模型与规则配置", expanded=False):
         help="本地模拟不联网；DeepSeek 负责事实主张提取，金额穿透与审查状态始终由确定性规则完成。"
     )
     if provider_name == "deepseek":
-        entered_key = st.text_input(
-            "DeepSeek 接口密钥（仅本次会话）",
-            key="deepseek_api_key_input",
-            type="password",
-            help=(
-                "可在页面粘贴密钥立即使用，无需重启容器；"
-                "密钥只保存在浏览器会话与容器内存中，不写入磁盘、数据库或导出文件。"
-            ),
-        )
-        page_key = entered_key.strip()
-        if page_key:
-            os.environ["DEEPSEEK_API_KEY"] = page_key
-        elif DEEPSEEK_ENV_KEY:
-            # Restore a key injected via `docker run -e ...` after the page box is cleared.
-            os.environ["DEEPSEEK_API_KEY"] = DEEPSEEK_ENV_KEY
-        else:
-            os.environ.pop("DEEPSEEK_API_KEY", None)
-        key_source = "页面输入" if page_key else ("容器环境变量" if DEEPSEEK_ENV_KEY else "未配置")
-        st.caption(f"密钥来源：{key_source}")
-
-        # Auto-verify each new key once per session so reviewers don't need to find
-        # the test button; a failed check never blocks the demo, it only informs.
-        verified_key = st.session_state.get("deepseek_key_verified")
-        effective_key = page_key or DEEPSEEK_ENV_KEY
-        if effective_key and verified_key != effective_key:
-            ok, message = _verify_deepseek_key()
-            st.session_state["deepseek_key_status"] = (ok, message, effective_key)
-            st.session_state["deepseek_key_verified"] = effective_key
-        status = st.session_state.get("deepseek_key_status")
-        if status and status[2] == effective_key:
-            (ok, message, _) = status
-            if ok:
-                st.success(message)
-            else:
-                st.warning(message)
-            if st.button("重新测试连接", use_container_width=True, key="retest_deepseek_connection"):
-                st.session_state.pop("deepseek_key_verified", None)
-                st.rerun()
-
-        col_key_test, col_key_clear = st.columns(2)
-        with col_key_test:
-            if st.button("测试连接", use_container_width=True, key="test_deepseek_connection"):
-                ok, message = _verify_deepseek_key()
-                st.session_state["deepseek_key_status"] = (ok, message, effective_key)
-                st.session_state["deepseek_key_verified"] = effective_key
-                if ok:
-                    st.success(message)
-                else:
-                    st.error(message)
-        with col_key_clear:
-            if st.button("清除页面输入", use_container_width=True, key="clear_deepseek_key"):
-                st.session_state.pop("deepseek_api_key_input", None)
-                st.rerun()
-        if not (page_key or DEEPSEEK_ENV_KEY):
-            st.warning("未配置 DeepSeek 接口密钥；可粘贴密钥，或切换回本地模拟。")
+        _render_deepseek_key_config()
     enable_claim_audit = st.checkbox(
         "启用漏提复核",
         value=False,
