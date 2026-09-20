@@ -9,6 +9,7 @@ output/*
 .pytest_cache/
 .review_render/
 .workbuddy-ai/
+*.workbuddy-aiwb-resp.json
 *.db
 *.egg-info/
 .streamlit_*.log

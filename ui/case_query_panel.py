@@ -84,13 +84,15 @@ def collect_query_sources(value):
 
 
 def render_case_query_panel(result, *, supplementary_documents=None, claim_id=None,
-                            transaction_id=None, entity=None, key="case_query"):
+                            transaction_id=None, entity=None, key="case_query",
+                            show_heading=True):
     case_id = result.claim.case_id
     documents = supplementary_documents or []
     provider_name = st.session_state.get("provider_name", "mock")
     panel_key = f"{key}_{case_id}"
-    st.markdown("#### 智能查询 · 只读")
-    st.caption("查询当前案件事实，不改变纳入、排除、别名确认或签署状态。未签署的表格编辑不计入查询结果。")
+    if show_heading:
+        st.markdown("#### 智能查询 · 只读")
+        st.caption("查询当前案件事实，不改变纳入、排除、别名确认或签署状态。未签署的表格编辑不计入查询结果。")
     try:
         decisions, statuses = load_query_review_state(
             result, st.session_state.get("repository_path"), st.session_state.get("decision")

@@ -4,6 +4,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_PATH = ROOT / "ui" / "streamlit_app.py"
+QUERY_PANEL_PATH = ROOT / "ui" / "case_query_panel.py"
 COMPONENT_PATH = ROOT / "ui" / "components" / "fund_flow" / "component.py"
 RENDERER_PATH = ROOT / "ui" / "components" / "fund_flow" / "assets" / "renderer.js"
 CSS_PATH = ROOT / "ui" / "components" / "fund_flow" / "assets" / "component.css"
@@ -201,6 +202,28 @@ class DeepSeekKeyConfigTest(unittest.TestCase):
         self.assertIn('if "DEEPSEEK_API_KEY" in str(exc):', source)
         self.assertIn("请展开左侧【⚙ 模型与规则配置】粘贴密钥", source)
         self.assertIn("或切换回【本地模拟（推荐演示）】", source)
+
+
+class EvidenceGraphLayoutRegressionTest(unittest.TestCase):
+    def test_graph_detail_and_query_use_stacked_full_width_sections(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        start = source.index("def evidence_graph_page(result)")
+        end = source.index("def audit_page(result)", start)
+        graph_page = source[start:end]
+
+        self.assertNotIn("st.columns([2.2, 1])", graph_page)
+        graph_pos = graph_page.index("state = render_evidence_graph(")
+        detail_pos = graph_page.index('"02 / 关系详情"')
+        query_pos = graph_page.index('"03 / 智能查询"')
+        self.assertLess(graph_pos, detail_pos)
+        self.assertLess(detail_pos, query_pos)
+        self.assertIn("show_heading=False", graph_page)
+
+    def test_query_panel_can_hide_its_heading_inside_a_named_page_section(self):
+        source = QUERY_PANEL_PATH.read_text(encoding="utf-8")
+        self.assertIn("show_heading=True", source)
+        self.assertIn("if show_heading:", source)
+
 
 class ReviewFlowRegressionTest(unittest.TestCase):
     def test_supersedes_is_scoped_to_the_current_claim(self):

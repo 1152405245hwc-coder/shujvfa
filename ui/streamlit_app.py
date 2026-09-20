@@ -2054,11 +2054,20 @@ def _evidence_card(title: str, items: list[tuple[str, str]], badge: tuple[str, s
     )
 
 
-def _render_case_query(result, *, claim_id=None, transaction_id=None, entity=None, key="case_query") -> None:
+def _render_case_query(
+    result,
+    *,
+    claim_id=None,
+    transaction_id=None,
+    entity=None,
+    key="case_query",
+    show_heading=True,
+) -> None:
     from case_query_panel import render_case_query_panel
     render_case_query_panel(
         result, supplementary_documents=_supplementary_documents(result),
         claim_id=claim_id, transaction_id=transaction_id, entity=entity, key=key,
+        show_heading=show_heading,
     )
 
 
@@ -3742,10 +3751,9 @@ def evidence_graph_page(result) -> None:
     if last_selection:
         payload["selected"] = last_selection
 
-    # 左图右 Inspector：点击节点/关系后，来源回溯固定在右侧栏，不用滚屏。
-    col_graph, col_inspector = st.columns([2.2, 1])
-    with col_graph:
-        state = render_evidence_graph(payload, height=700, key="evidence_graph_main")
+    # 图谱独占整行，避免右侧查询结果较长时在图下方形成大片空白。
+    state = render_evidence_graph(payload, height=700, key="evidence_graph_main")
+    st.caption("点击图中人物、账户、主张或关系线可查看来源；滚轮缩放、拖拽平移。")
 
     selection = None
     if state is not None:
@@ -3758,60 +3766,76 @@ def evidence_graph_page(result) -> None:
     if current_selection != last_selection:
         st.session_state[sel_state_key] = current_selection
 
-    with col_inspector:
-        if not selection:
-            st.caption("点击图中人物、账户、主张或关系线，此处显示其来源回溯；滚轮缩放、拖拽平移。")
-            _render_case_query(result, key="graph_query")
-            return
+    lookup: dict[tuple[str, str], dict] = {}
+    for node in payload.get("nodes", []):
+        lookup[("node", node.get("id"))] = node
+    for edge in payload.get("edges", []):
+        lookup[("edge", edge.get("id"))] = edge
+    entry = lookup.get((selection.get("type"), selection.get("id"))) if selection else None
+    if selection and entry is None:
+        entry = selection
 
-        lookup: dict[tuple[str, str], dict] = {}
-        for node in payload.get("nodes", []):
-            lookup[("node", node.get("id"))] = node
-        for edge in payload.get("edges", []):
-            lookup[("edge", edge.get("id"))] = edge
-        entry = lookup.get((selection.get("type"), selection.get("id"))) or selection
+    render_section_heading(
+        "02 / 关系详情",
+        "当前选中对象",
+        "查看节点或关系的属性、争议状态及其原始证据定位",
+    )
 
+    selected_claim_id = None
+    selected_tx_id = None
+    selected_entity = None
+    if not selection:
+        st.info("尚未选中对象。点击上方关系图中的人物、账户、主张或关系线，可在此查看来源详情。")
+    else:
         def _ref_text(ref: dict) -> str:
             return " · ".join(f"{k}={v}" for k, v in ref.items() if v not in (None, "", []))
 
-        tab_detail, tab_graph_query = st.tabs(["详情", "智能查询"])
-        with tab_detail:
-            if selection.get("type") == "node":
-                items = [
-                    ("节点类型", entry.get("role_label") or entry.get("type", "-")),
-                    ("脱敏账号", entry.get("masked_account") or "-"),
-                    ("主张金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
-                ]
-                refs = entry.get("source_refs") or []
-                for idx, ref in enumerate(refs[:8], 1):
-                    items.append((f"来源 {idx:02d}", _ref_text(ref)))
-                if len(refs) > 8:
-                    items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
-                _evidence_card(f"节点 · {entry.get('label') or entry.get('name', '-')}", items)
-            else:
-                items = [
-                    ("关系类型", entry.get("type", "-")),
-                    ("关系性质", "! 待证/争议（不构成确定事实）" if entry.get("disputed") else "✓ 由确定性记录直接得出"),
-                    ("累计金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
-                    ("流水笔数", f"{entry.get('count', 1)} 笔"),
-                    ("说明", entry.get("reason") or "-"),
-                ]
-                refs = entry.get("source_refs") or []
-                for idx, ref in enumerate(refs[:8], 1):
-                    items.append((f"来源 {idx:02d}", _ref_text(ref)))
-                if len(refs) > 8:
-                    items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
-                _evidence_card("关系 · 待人工核验" if entry.get("disputed") else "关系 · 记录确认", items)
-        with tab_graph_query:
-            query_refs = entry.get("source_refs") or []
-            selected_claim_id = next((ref.get("claim_id") for ref in query_refs if ref.get("claim_id")), None)
-            selected_tx_ids = {ref["transaction_id"] for ref in query_refs if ref.get("transaction_id")}
-            selected_tx_id = next(iter(selected_tx_ids)) if len(selected_tx_ids) == 1 else None
-            _render_case_query(
-                result, claim_id=selected_claim_id, transaction_id=selected_tx_id,
-                entity=entry.get("name") if selection.get("type") == "node" else None,
-                key="graph_query",
-            )
+        if selection.get("type") == "node":
+            items = [
+                ("节点类型", entry.get("role_label") or entry.get("type", "-")),
+                ("脱敏账号", entry.get("masked_account") or "-"),
+                ("主张金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
+            ]
+            refs = entry.get("source_refs") or []
+            for idx, ref in enumerate(refs[:8], 1):
+                items.append((f"来源 {idx:02d}", _ref_text(ref)))
+            if len(refs) > 8:
+                items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
+            _evidence_card(f"节点 · {entry.get('label') or entry.get('name', '-')}", items)
+            selected_entity = entry.get("name")
+        else:
+            items = [
+                ("关系类型", entry.get("type", "-")),
+                ("关系性质", "! 待证/争议（不构成确定事实）" if entry.get("disputed") else "✓ 由确定性记录直接得出"),
+                ("累计金额", f"¥{entry.get('amount'):,.2f}" if entry.get("amount") else "-"),
+                ("流水笔数", f"{entry.get('count', 1)} 笔"),
+                ("说明", entry.get("reason") or "-"),
+            ]
+            refs = entry.get("source_refs") or []
+            for idx, ref in enumerate(refs[:8], 1):
+                items.append((f"来源 {idx:02d}", _ref_text(ref)))
+            if len(refs) > 8:
+                items.append(("…", f"另有 {len(refs) - 8} 条来源记录"))
+            _evidence_card("关系 · 待人工核验" if entry.get("disputed") else "关系 · 记录确认", items)
+
+        query_refs = entry.get("source_refs") or []
+        selected_claim_id = next((ref.get("claim_id") for ref in query_refs if ref.get("claim_id")), None)
+        selected_tx_ids = {ref["transaction_id"] for ref in query_refs if ref.get("transaction_id")}
+        selected_tx_id = next(iter(selected_tx_ids)) if len(selected_tx_ids) == 1 else None
+
+    render_section_heading(
+        "03 / 智能查询",
+        "案件事实只读查询",
+        "查询结果在页面全宽展示，不改变案件事实、复核处置或签署状态",
+    )
+    _render_case_query(
+        result,
+        claim_id=selected_claim_id,
+        transaction_id=selected_tx_id,
+        entity=selected_entity,
+        key="graph_query",
+        show_heading=False,
+    )
 
 
 def audit_page(result) -> None:
