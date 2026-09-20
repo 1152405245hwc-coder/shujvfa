@@ -1825,12 +1825,14 @@ def _render_candidate_batch_toolbar(candidates, state_disp_key, state_reason_key
     )
     col_b1, col_b2 = st.columns(2)
     if col_b1.button(
-        "一键套用系统建议", use_container_width=True, type="primary", key=f"batch_adopt_{suffix}_{claim_id}",
+        "采纳系统建议", use_container_width=True, type="primary", key=f"batch_adopt_{suffix}_{claim_id}",
         help="无阻断风险候选置为采信纳入；第三方代收/阻断候选自动保留为列为争议",
     ):
-        st.session_state[f"batch_notice_{claim_id}"] = _apply_batch_dispositions(
+        notice = _apply_batch_dispositions(
             candidates, state_disp_key, state_reason_key, "smart"
         )
+        st.session_state[f"batch_notice_{claim_id}"] = notice
+        _queue_toast(notice)
         st.session_state.pop(editor_state_key, None)
         _pop_high_risk_widget_keys(claim_id)
         st.rerun()
@@ -1838,9 +1840,11 @@ def _render_candidate_batch_toolbar(candidates, state_disp_key, state_reason_key
         "恢复初始建议", use_container_width=True, key=f"batch_reset_{suffix}_{claim_id}",
         help="撤销本页人工修改：阻断候选回到列为争议，其余候选回到等待人工审查",
     ):
-        st.session_state[f"batch_notice_{claim_id}"] = _apply_batch_dispositions(
+        notice = _apply_batch_dispositions(
             candidates, state_disp_key, state_reason_key, "reset"
         )
+        st.session_state[f"batch_notice_{claim_id}"] = notice
+        _queue_toast(notice, icon="↩️")
         st.session_state.pop(editor_state_key, None)
         _pop_high_risk_widget_keys(claim_id)
         st.rerun()
@@ -1854,6 +1858,16 @@ def _show_batch_notice(claim_id, *, pop: bool = False) -> None:
         st.success(notice)
         if pop:
             st.session_state.pop(key, None)
+
+
+def _queue_toast(message: str, icon: str = "✅") -> None:
+    """动作回执：rerun 后以悬浮 toast 弹出。用户滚动到页面任何位置都能看到反馈。"""
+    st.session_state.setdefault("_pending_toasts", []).append((message, icon))
+
+
+def _flush_toasts() -> None:
+    for message, icon in st.session_state.pop("_pending_toasts", []):
+        st.toast(message, icon=icon)
 
 
 HR_CHOICE_DISPUTED = "列为争议 · 不计入金额（系统建议）"
@@ -1991,10 +2005,10 @@ def _apply_checklist_statuses(case_id: str, items: list[dict]) -> list[dict]:
         item_id = item.get("item_id", "")
         current = statuses.get(item_id, item.get("status", "待核查"))
         checked = st.checkbox(
-            f"已完成核查：{item.get('priority', '')}优先 · {item.get('category', '')}",
+            f"{item.get('priority', '')}优先 · {item.get('category', '')}",
             value=current == "已核查",
             key=f"{state_key}_{item_id}",
-            help="勾选表示复核人已完成该项核查，状态随底稿导出留痕；不影响金额与结论。",
+            help="完成该项核查后打勾，状态随底稿导出留痕；不影响金额与结论。",
         )
         current = "已核查" if checked else "待核查"
         statuses[item_id] = current
@@ -3052,19 +3066,29 @@ def review_page(result) -> None:
         signed_notice = st.session_state.pop("signed_notice", None)
         if signed_notice:
             remaining = len(next_pending)
-            next_step = (
-                "可点击下方「跳转处理下一笔待审核主张」按钮直接继续。"
-                if remaining else "全部主张均已完成，请前往【04 审查底稿留痕】查看全案底稿与导出包。"
-            )
+            total = len(claims_list)
+            if remaining:
+                next_step = "可点击下方「跳转处理下一笔待审核主张」按钮直接继续。"
+                st.toast(f"已完成 {total - remaining}/{total} 笔主张核验签署，还剩 {remaining} 笔待处理。", icon="✅")
+            else:
+                next_step = "全部主张均已完成，请前往【04 审查底稿留痕】查看全案底稿与导出包。"
+                st.toast(f"全部 {total} 笔主张均已完成核验签署，请前往【04 审查底稿留痕】导出底稿。", icon="🎉")
             st.success(f"{signed_notice}{next_step}")
         if next_pending:
             next_label = next(lbl for lbl, c in claim_map.items() if c is next_pending[0])
             if st.session_state.get("review_claim_selector") != next_label:
+                target_claim = next_pending[0]
+                target_step = "请先核准起诉事实，再逐笔核验流水。" if target_claim in remaining_unconfirmed else "起诉事实已核准，请完成流水核验并签署。"
+
+                def _jump_to_pending(label=next_label, claim=target_claim, step=target_step):
+                    st.session_state["review_claim_selector"] = label
+                    _queue_toast(f"已切换到「{_claim_label_for(claims_list, claim)}」。{step}", icon="➡️")
+
                 st.button(
-                    f"跳转处理下一笔待审核主张：{_claim_label_for(claims_list, next_pending[0])}",
+                    f"跳转处理下一笔待审核主张：{_claim_label_for(claims_list, target_claim)}",
                     type="primary",
                     key="jump_next_pending_claim",
-                    on_click=lambda: st.session_state.update({"review_claim_selector": next_label}),
+                    on_click=_jump_to_pending,
                 )
         selected_key = st.selectbox(
             "选择当前核验的涉案付款事实主张", list(claim_map.keys()), key="review_claim_selector"
@@ -3140,6 +3164,7 @@ def review_page(result) -> None:
     if not is_claim_confirmed:
         st.warning("【第一步：事实主张核准】当前涉案事实主张由规则/大模型初步提取。请复核上述金额、主体与时间范围。确认无误后请点击下方按钮核准，系统将解锁银行流水逐笔核验。")
         if st.button("核准起诉事实主张，进入资金核验", type="primary", use_container_width=True):
+            claim_label = _claim_label_for(claims_list, claim)
             confirmed = confirm_claim_extraction(claim)
             if result.claims:
                 for i, c in enumerate(result.claims):
@@ -3158,6 +3183,7 @@ def review_page(result) -> None:
                     raise
             st.session_state.pop("decision", None)
             st.session_state.pop("report", None)
+            _queue_toast(f"已核准「{claim_label}」起诉事实，请继续完成流水核验与处置。")
             st.rerun()
         return
 
@@ -3520,6 +3546,7 @@ def review_page(result) -> None:
                     )
                     st.rerun()
                 st.success(f"已保存 v{decision.version} 人工复核确认：{_status_label(decision.status.value)}。请前往【04 审查底稿留痕】查看全案底稿与导出包。")
+                st.toast("复核底稿已签署保存，请前往【04 审查底稿留痕】查看与导出。", icon="✅")
             except Exception as exc:
                 error_text = str(exc)
                 if error_text == "BLOCKING_CANDIDATE_REQUIRES_DISPUTED":
@@ -3790,7 +3817,7 @@ def audit_page(result) -> None:
                 st.caption("陈述提取降级记录：" + "；".join(statement_warnings))
 
     with st.expander("查看补充调查与原始材料回查清单", expanded=True):
-        st.caption("每项建议都保留关联流水或主张的原始定位；系统不改写原始 Word/Excel，只提供回查入口和执行记录。")
+        st.caption("每项建议都保留关联流水或主张的原始定位；系统不改写原始 Word/Excel，只提供回查入口和执行记录。完成核查的项请打勾，勾选状态随底稿导出留痕（不影响金额计算与结论）。")
         checklist = master_rep.get("investigation_checklist", [])
         stored_items = _load_investigation_items(
             st.session_state.get("repository_path"), result.claim.case_id
@@ -4128,6 +4155,7 @@ else:
     parse_notice = st.session_state.pop("parse_notice", None)
     if parse_notice:
         st.success(f"✓ {parse_notice}")
+    _flush_toasts()
     if page_selection.startswith("02"):
         transactions_page(sidebar_result)
     elif page_selection.startswith("03"):

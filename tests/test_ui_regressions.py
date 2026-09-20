@@ -175,10 +175,21 @@ class ReviewFlowRegressionTest(unittest.TestCase):
     def test_batch_toolbar_appears_once_with_task_framing(self):
         source = APP_PATH.read_text(encoding="utf-8")
         self.assertEqual(source.count("_render_candidate_batch_toolbar(candidates"), 2)
-        self.assertIn("一键套用系统建议", source)
+        self.assertIn("采纳系统建议", source)
         self.assertIn("恢复初始建议", source)
         self.assertIn("对候选流水逐笔作出处置决定", source)
         self.assertNotIn("一键预填处置建议", source)
+
+    def test_key_actions_queue_toast_feedback(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn("def _queue_toast(", source)
+        self.assertIn("def _flush_toasts(", source)
+        self.assertIn("_flush_toasts()", source)
+        # 核准、签署、跳转、批量处置都必须有悬浮回执，不能让用户感觉点了没反应
+        self.assertIn("已核准「{claim_label}」起诉事实", source)
+        self.assertIn("笔主张核验签署，还剩", source)
+        self.assertIn("已切换到「", source)
+        self.assertIn("_queue_toast(notice)", source)
 
 
 
