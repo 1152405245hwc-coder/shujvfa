@@ -1802,7 +1802,7 @@ def _apply_batch_dispositions(candidates, state_disp_key, state_reason_key, mode
             st.session_state[state_reason_key][c.transaction_id] = "吻合起诉指控事实"
             adopted += 1
     if mode == "reset":
-        return f"已恢复系统建议：{disputed} 笔阻断候选保留为争议，其余 {len(candidates) - disputed} 笔回到等待人工审查。"
+        return f"已恢复初始建议：{disputed} 笔阻断候选保留为争议，其余 {len(candidates) - disputed} 笔回到等待人工审查。"
     notice = f"✓ 已处理 {adopted} 笔常规候选"
     if disputed:
         notice += f"；{disputed} 笔阻断/第三方代收候选保留为争议，仍需人工审查"
@@ -1817,11 +1817,15 @@ def _pop_high_risk_widget_keys(claim_id) -> None:
 
 
 def _render_candidate_batch_toolbar(candidates, state_disp_key, state_reason_key, editor_state_key, claim_id, suffix) -> None:
-    """批量处置工具栏：一键预填 + 撤销。阻断候选自动保留为争议，其余采信纳入。"""
-    st.caption("点击「一键预填处置建议」自动完成批量处置；阻断/第三方代收候选自动保留为争议，其余置为采信纳入。可逐笔微调后再签署。")
+    """批量辅助处理：一键套用系统建议 + 恢复初始建议。只预填处置结果，不提交签署。"""
+    st.markdown('<div class="section-kicker">批量辅助处理</div>', unsafe_allow_html=True)
+    st.caption(
+        "仅用于快速填充处置结果，不会直接提交签署：无阻断风险的常规候选置为「采信纳入」，"
+        "第三方代收/阻断候选自动保留为「列为争议」；预填后仍可在下方表格中逐笔修改。"
+    )
     col_b1, col_b2 = st.columns(2)
     if col_b1.button(
-        "一键预填处置建议", use_container_width=True, type="primary", key=f"batch_adopt_{suffix}_{claim_id}",
+        "一键套用系统建议", use_container_width=True, type="primary", key=f"batch_adopt_{suffix}_{claim_id}",
         help="无阻断风险候选置为采信纳入；第三方代收/阻断候选自动保留为列为争议",
     ):
         st.session_state[f"batch_notice_{claim_id}"] = _apply_batch_dispositions(
@@ -1831,8 +1835,8 @@ def _render_candidate_batch_toolbar(candidates, state_disp_key, state_reason_key
         _pop_high_risk_widget_keys(claim_id)
         st.rerun()
     if col_b2.button(
-        "恢复系统建议", use_container_width=True, key=f"batch_reset_{suffix}_{claim_id}",
-        help="清除人工改动：阻断候选回到列为争议，其余候选回到等待人工审查",
+        "恢复初始建议", use_container_width=True, key=f"batch_reset_{suffix}_{claim_id}",
+        help="撤销本页人工修改：阻断候选回到列为争议，其余候选回到等待人工审查",
     ):
         st.session_state[f"batch_notice_{claim_id}"] = _apply_batch_dispositions(
             candidates, state_disp_key, state_reason_key, "reset"
@@ -1843,7 +1847,7 @@ def _render_candidate_batch_toolbar(candidates, state_disp_key, state_reason_key
 
 
 def _show_batch_notice(claim_id, *, pop: bool = False) -> None:
-    """批量操作回执：一次性展示，不依赖数据表肉眼变化。候选区顶部与签署区各展示一次后清除。"""
+    """批量操作回执：一次性展示，不依赖数据表肉眼变化。在候选区顶部展示一次后清除。"""
     key = f"batch_notice_{claim_id}"
     notice = st.session_state.get(key)
     if notice:
@@ -1987,9 +1991,10 @@ def _apply_checklist_statuses(case_id: str, items: list[dict]) -> list[dict]:
         item_id = item.get("item_id", "")
         current = statuses.get(item_id, item.get("status", "待核查"))
         checked = st.checkbox(
-            f"{item.get('priority', '')}优先 · {item.get('category', '')}",
+            f"已完成核查：{item.get('priority', '')}优先 · {item.get('category', '')}",
             value=current == "已核查",
             key=f"{state_key}_{item_id}",
+            help="勾选表示复核人已完成该项核查，状态随底稿导出留痕；不影响金额与结论。",
         )
         current = "已核查" if checked else "待核查"
         statuses[item_id] = current
@@ -2344,7 +2349,14 @@ def _materials_panel(active_case_id: str) -> None:
                 st.session_state.pop("decision", None)
                 st.session_state.pop("report", None)
                 st.session_state.pop("failed_audit_events", None)
-                st.success("材料处理完成，等待人工复核。")
+                parsed_claims = getattr(result, "claims", None) or [result.claim]
+                st.session_state["parse_notice"] = (
+                    f"案卷解析完成：识别起诉主张 {len(parsed_claims)} 笔、银行流水 {len(result.transactions)} 笔"
+                    f"（去重后 {len(getattr(result, 'canonical_transactions', None) or result.transactions)} 个交易事件）。"
+                    "请先到【03 资金证据核验】逐笔核准起诉事实并处置候选流水，完成后签署保存底稿。"
+                )
+                st.session_state["nav_page"] = PAGE_REVIEW
+                st.rerun()
             except Exception as exc:
                 st.session_state.failed_audit_events = getattr(exc, "audit_events", [])
                 st.error(f"材料处理失败：{exc}")
@@ -2974,6 +2986,56 @@ def _render_weak_signal_section(result, claim) -> None:
     )
 
 
+def _claim_label_for(claims_list, claim) -> str:
+    index = claims_list.index(claim) + 1
+    return f"主张{index}（{claim.victim_name} ➔ {claim.alleged_recipient_name or '待确认'}）"
+
+
+def _render_multi_claim_progress(result, claims_list) -> None:
+    """多主张案件进度横幅：未核准 / 未签署的主张用红色明示，防止只办一笔就收尾。
+
+    签署状态以「人工确认（HUMAN_CONFIRMED）版本的复核决定」为准：会话内当前决定优先，
+    本地快照库只读查询补齐其余主张，不创建或写入数据库。
+    """
+    from case_query_panel import load_query_review_state
+
+    decisions_map, _ = load_query_review_state(
+        result, st.session_state.get("repository_path"), st.session_state.get("decision")
+    )
+
+    def is_signed(claim) -> bool:
+        decision = decisions_map.get(claim.id)
+        dtype = getattr(decision, "decision_type", None)
+        return str(getattr(dtype, "value", dtype or "")) == "HUMAN_CONFIRMED"
+
+    unconfirmed = [c for c in claims_list if c.extraction_status != "human_confirmed"]
+    unsigned = [c for c in claims_list if c.extraction_status == "human_confirmed" and not is_signed(c)]
+
+    if not unconfirmed and not unsigned:
+        st.markdown(
+            f'<div class="accessible-notice ok"><span class="notice-icon">✓</span> '
+            f'<strong>多主张案件进度：</strong>本案 {len(claims_list)} 笔起诉主张均已核准并完成流水核验签署，'
+            '全案底稿已可归档。</div>',
+            unsafe_allow_html=True,
+        )
+        return unconfirmed, unsigned
+
+    parts = []
+    if unconfirmed:
+        parts.append("未核准起诉事实：" + "、".join(_claim_label_for(claims_list, c) for c in unconfirmed))
+    if unsigned:
+        parts.append("已核准但尚未完成流水核验签署：" + "、".join(_claim_label_for(claims_list, c) for c in unsigned))
+    done_count = len(claims_list) - len(unconfirmed) - len(unsigned)
+    st.markdown(
+        f'<div class="accessible-notice danger"><span class="notice-icon">!</span> '
+        f'<strong>多主张案件进度提醒：</strong>本案共 {len(claims_list)} 笔起诉主张，仅 {done_count} 笔完成核验签署。'
+        f'{"；".join(parts)}。每笔主张都需单独核准并签署，请通过下方主张选择器逐笔切换处理；'
+        '未全部完成前，导出的底稿不构成全案结论。</div>',
+        unsafe_allow_html=True,
+    )
+    return unconfirmed, unsigned
+
+
 def review_page(result) -> None:
     status_label = "◌ 等待人工复核" if "decision" not in st.session_state else "✓ 复核已完成"
     data_label = "实战评测卷宗" if result.claim.case_id == "GOLD_CASE_001" else "演示案件"
@@ -2981,11 +3043,32 @@ def review_page(result) -> None:
     _render_demo_context_bar()
     claims_list = result.claims if result.claims else [result.claim]
     if len(claims_list) > 1:
+        remaining_unconfirmed, remaining_unsigned = _render_multi_claim_progress(result, claims_list)
         claim_map = {
             f"主张 {idx + 1}：{c.victim_name} ➔ {c.alleged_recipient_name or '待确认'} (¥{c.claimed_amount:,.2f}) [{c.id}]": c
             for idx, c in enumerate(claims_list)
         }
-        selected_key = st.selectbox("选择当前核验的涉案付款事实主张", list(claim_map.keys()))
+        next_pending = remaining_unconfirmed + remaining_unsigned
+        signed_notice = st.session_state.pop("signed_notice", None)
+        if signed_notice:
+            remaining = len(next_pending)
+            next_step = (
+                "可点击下方「跳转处理下一笔待审核主张」按钮直接继续。"
+                if remaining else "全部主张均已完成，请前往【04 审查底稿留痕】查看全案底稿与导出包。"
+            )
+            st.success(f"{signed_notice}{next_step}")
+        if next_pending:
+            next_label = next(lbl for lbl, c in claim_map.items() if c is next_pending[0])
+            if st.session_state.get("review_claim_selector") != next_label:
+                st.button(
+                    f"跳转处理下一笔待审核主张：{_claim_label_for(claims_list, next_pending[0])}",
+                    type="primary",
+                    key="jump_next_pending_claim",
+                    on_click=lambda: st.session_state.update({"review_claim_selector": next_label}),
+                )
+        selected_key = st.selectbox(
+            "选择当前核验的涉案付款事实主张", list(claim_map.keys()), key="review_claim_selector"
+        )
         claim = claim_map[selected_key]
         candidates = result.candidates_by_claim.get(claim.id, [])
         sys_decision = result.system_decisions_by_claim.get(claim.id, result.system_decision)
@@ -3164,6 +3247,14 @@ def review_page(result) -> None:
 
     # 步骤二：流水核验
     render_section_heading("03 / 候选审查", "待核验候选流水审查表", "按审核必要性与阻断风险智能排序")
+    st.markdown(
+        '<div class="review-summary"><div class="section-kicker">当前任务</div>'
+        '<strong>对候选流水逐笔作出处置决定，这是签署前的主要工作。</strong>'
+        '<p>每笔流水选择一种结果：<strong>采信纳入</strong>（计入涉案金额）/ <strong>列为争议</strong>（代收、冲突等待查）/ '
+        '<strong>予以排除</strong>（与本案无关或重复记录）/ <strong>等待人工审查</strong>（暂不结论）。'
+        '可先用「一键套用系统建议」批量预填，再在表格中逐笔修改；全部处理完成后，到下方「04 / 签署」填写复核意见并签署保存。</p></div>',
+        unsafe_allow_html=True,
+    )
     high_risk_candidates = [c for c in candidates if candidate_risk_level(c) == "高"]
     review_order = {candidate.transaction_id: index for index, candidate in enumerate(candidates, 1)}
     st.caption(f"已按审核必要性排序：P1 优先处理阻断风险，其次按风险分、金额和日期排列；重点核查 {len(high_risk_candidates)} 笔，常规候选 {len(candidates) - len(high_risk_candidates)} 笔。")
@@ -3213,9 +3304,9 @@ def review_page(result) -> None:
             render_high_risk_transaction(f"P{review_order[candidate.transaction_id]}", tx, candidate)
             _render_high_risk_disposition(tx, candidate, state_disp_key, state_reason_key, editor_state_key, claim.id)
 
-    # 快捷批量操作工具栏（候选区顶部一组；签署区底部另有一组相同动作）
+    # 批量辅助处理工具栏：只放在审查表顶部，签署区不再重复，避免“同一动作出现两次”的歧义。
     _render_candidate_batch_toolbar(candidates, state_disp_key, state_reason_key, editor_state_key, claim.id, "top")
-    _show_batch_notice(claim.id)
+    _show_batch_notice(claim.id, pop=True)
 
     candidate_rows = []
     for candidate in candidates:
@@ -3275,7 +3366,13 @@ def review_page(result) -> None:
         tab_tx_detail, tab_tx_query = st.tabs(["详情", "智能查询"])
         with tab_tx_detail:
             if picked_index < 0:
-                st.caption("从上方选择一笔候选流水，此处显示其证据详情与当前处置。")
+                st.markdown(
+                    '<div class="review-summary"><div class="section-kicker">未选择流水</div>'
+                    '<strong>请先在左侧审查表上方的「流水详情查看」中选择一笔流水。</strong>'
+                    '<p>建议优先查看 P1/P2 高风险项。选中后此处展示该笔流水的：原始证据定位、'
+                    '核对规则、风险提示与当前处置；「智能查询」页可继续追问争议原因与相关证据。</p></div>',
+                    unsafe_allow_html=True,
+                )
             else:
                 sel_row = candidate_rows[picked_index]
                 sel_tx = result.transactions[sel_row["_tid"]]
@@ -3307,10 +3404,7 @@ def review_page(result) -> None:
     # 步骤三：签署复核确认
     render_section_heading("04 / 签署", "签署复核确认并保存底稿", "经办人员对事实认定与流水处置进行电子签署，签署记录入库存档、不可静默覆盖")
 
-    # 底部再放一组与候选区一致的快捷动作，避免为处理状态回滚数屏。
-    st.caption("处置状态与上方审查表共用：可在此处直接批量处理，无需回滚页面。")
-    _render_candidate_batch_toolbar(candidates, state_disp_key, state_reason_key, editor_state_key, claim.id, "bottom")
-    _show_batch_notice(claim.id, pop=True)
+    st.caption("候选流水全部完成处置后，请在此填写复核意见并签署保存；如需批量调整处置，请回到上方审查表顶部的「批量辅助处理」。")
 
     c_r1, c_r2 = st.columns([1, 2])
     with c_r1:
@@ -3374,11 +3468,19 @@ def review_page(result) -> None:
                     reason_code=REASON_CN.get(row.get("认定理由"), "OTHER"),
                     note=str(row.get("经办备注") or "").strip() or None,
                 ) for row in edited_records]
+                # 版本链只对同一主张续接：会话里保存的可能是另一主张的已签署决定，
+                # 跨主张直接传入会触发 SUPERSEDES_CLAIM_MISMATCH，此处按主张过滤。
+                prior_decision = st.session_state.get("decision")
+                supersedes = (
+                    prior_decision
+                    if prior_decision is not None and getattr(prior_decision, "claim_id", None) == claim.id
+                    else None
+                )
                 decision, report = review_transactions(
                     result, actions, reviewer=reviewer.strip(),
                     claim_id=claim.id,
                     note=note.strip() or None,
-                    supersedes=st.session_state.get("decision"),
+                    supersedes=supersedes,
                 )
                 st.session_state.decision = decision
                 st.session_state.report = report
@@ -3409,11 +3511,25 @@ def review_page(result) -> None:
                 st.query_params["case_id"] = result.claim.case_id
                 if checkpoint_created:
                     st.info("签署后的脱敏案件快照已保存到本机 SQLite；页面刷新后可自动恢复当前案件。")
+                # 多主张案件：先重渲染让顶部进度横幅立即反映本次签署，再以一次性回执引导下一笔；
+                # 单主张案件直接展示成功信息即可。
+                claims_for_case = result.claims if getattr(result, "claims", None) else [result.claim]
+                if len(claims_for_case) > 1:
+                    st.session_state["signed_notice"] = (
+                        f"已保存 v{decision.version} 人工复核确认：{_status_label(decision.status.value)}。"
+                    )
+                    st.rerun()
                 st.success(f"已保存 v{decision.version} 人工复核确认：{_status_label(decision.status.value)}。请前往【04 审查底稿留痕】查看全案底稿与导出包。")
             except Exception as exc:
                 error_text = str(exc)
                 if error_text == "BLOCKING_CANDIDATE_REQUIRES_DISPUTED":
                     error_text = "高风险阻断候选不允许采信纳入。"
+                elif error_text == "SUPERSEDES_CLAIM_MISMATCH":
+                    error_text = "复核版本链与当前主张不一致；请重新进入本主张页面后再签署。"
+                elif error_text == "CLAIM_EXTRACTION_CONFIRMATION_REQUIRED":
+                    error_text = "该主张尚未核准起诉事实，请先完成第一步核准。"
+                elif error_text == "PENDING_CANDIDATE_REVIEW_REQUIRED":
+                    error_text = "候选流水尚未全部完成处置，或处置范围与当前主张候选不一致。"
                 elif error_text.startswith("immutable decision already exists:"):
                     error_text = "该复核版本已存在且内容不同；请载入最新案件后再签署新的复核版本。"
                 st.error(f"复核确认未保存：{error_text}")
@@ -3610,6 +3726,8 @@ def audit_page(result) -> None:
 
     from legal_funds_agent.services.case_report_service import build_case_master_report, case_report_to_html
     claims_list = result.claims if getattr(result, "claims", None) else [result.claim]
+    if len(claims_list) > 1:
+        _render_multi_claim_progress(result, claims_list)
     conflict_matrix = _conflict_matrix_for(result, _supplementary_documents(result))
     decisions_dict = {}
     if getattr(result, "system_decisions_by_claim", None):
@@ -4006,11 +4124,15 @@ elif page_selection.startswith("01"):
 elif sidebar_result is None:
     render_section_heading("页面 / 空", "请先加载案卷材料", "当前工作区需要有效案件数据")
     st.warning("— 当前没有可用审查任务。请前往【01 案件审查概览】载入案卷或上传材料。")
-elif page_selection.startswith("02"):
-    transactions_page(sidebar_result)
-elif page_selection.startswith("03"):
-    review_page(sidebar_result)
-elif page_selection.startswith("05"):
-    evidence_graph_page(sidebar_result)
 else:
-    audit_page(sidebar_result)
+    parse_notice = st.session_state.pop("parse_notice", None)
+    if parse_notice:
+        st.success(f"✓ {parse_notice}")
+    if page_selection.startswith("02"):
+        transactions_page(sidebar_result)
+    elif page_selection.startswith("03"):
+        review_page(sidebar_result)
+    elif page_selection.startswith("05"):
+        evidence_graph_page(sidebar_result)
+    else:
+        audit_page(sidebar_result)

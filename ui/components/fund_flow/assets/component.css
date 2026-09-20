@@ -77,7 +77,9 @@
   left: 10px;
   z-index: 10;
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  max-width: calc(100% - 20px);
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid #e2e7ea;
   padding: 6px 10px;
@@ -89,6 +91,23 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+
+.ff-legend .ff-key[data-ff-group] {
+  cursor: pointer;
+  user-select: none;
+}
+
+.ff-legend .ff-key[data-ff-group]:hover {
+  color: #10222f;
+}
+
+.ff-legend .ff-key.ff-key-active {
+  color: #10222f;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 2px;
 }
 
 .ff-legend .ff-node {
@@ -109,6 +128,11 @@
   border-color: #dc2626;
 }
 
+.ff-legend .ff-node.disputed {
+  background: #fdf8ec;
+  border-color: #b07d2b;
+}
+
 .ff-legend .ff-line {
   display: inline-block;
   width: 22px;
@@ -123,8 +147,14 @@
 }
 
 .ff-legend .ff-line.refund {
-  border-top-color: #7a6c3f;
+  border-top-color: #5b7a8c;
   border-top-width: 3px;
+}
+
+.ff-legend .ff-line.pending {
+  border-top-color: #8b98a2;
+  border-top-style: dashed;
+  border-top-width: 2px;
 }
 
 .ff-legend .ff-line.excluded {

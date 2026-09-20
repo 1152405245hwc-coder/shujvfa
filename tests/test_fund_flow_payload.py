@@ -110,6 +110,16 @@ class TopologyPayloadTest(unittest.TestCase):
         transactions = {tx1.id: tx1, tx2.id: tx2}
         return build_fund_flow_topology([claim], transactions, [decision]), transactions
 
+    def test_reason_codes_are_translated_to_chinese(self):
+        """Edge tooltips face reviewers directly: internal reason codes must not leak English."""
+        topo, transactions = self._topology()
+        payload = payload_module.topology_to_payload(topo, transactions=transactions)
+        reasons = {e["reason"] for e in payload["edges"] if e["reason"]}
+        self.assertIn("第三方账户代收代转（非嫌疑人开户）", reasons)
+        self.assertIn("吻合起诉指控事实", reasons)
+        for reason in reasons:
+            self.assertNotRegex(reason, r"[A-Z]{2,}_[A-Z]")
+
     def test_payload_is_byte_stable_across_rebuilds(self):
         """Two independent renders of the same graph must hash identically.
 

@@ -16,6 +16,26 @@ DISPOSITION_LABELS = {
     "REFUND": "疑似转回",
 }
 
+# 处置理由内部代码 → 页面展示中文。悬浮提示直接面对办案人员，
+# 不能把 THIRD_PARTY_RECIPIENT 之类的英文枚举值暴露出去。
+REASON_CODE_LABELS = {
+    "MATCHED_CLAIM": "吻合起诉指控事实",
+    "THIRD_PARTY_RECIPIENT": "第三方账户代收代转（非嫌疑人开户）",
+    "DUPLICATE_TRANSACTION": "重复记账/镜像流水",
+    "UNRELATED_TRANSACTION": "与本案无关的日常交易",
+    "ACCOUNT_MISMATCH": "非指定涉案银行账户",
+    "AMOUNT_MISMATCH": "金额与指控存在出入",
+    "DATE_MISMATCH": "超出案发时间跨度",
+    "DISPUTED_TRANSACTION": "人工列为争议，待进一步核查",
+    "OTHER": "其他经办人说明事项",
+}
+
+
+def _reason_label(reason: str | None) -> str:
+    if not reason:
+        return ""
+    return REASON_CODE_LABELS.get(reason, reason)
+
 DISPLAY_ROLES = {"victim", "suspect", "third_party_disputed", "downstream"}
 
 
@@ -103,7 +123,7 @@ def topology_to_payload(
                 "amount_full": f"¥{total:,.2f}",
                 "disposition": agg.disposition,
                 "disposition_label": DISPOSITION_LABELS.get(agg.disposition, agg.disposition),
-                "reason": agg.reason or "",
+                "reason": _reason_label(agg.reason),
                 "date_min": agg.date_min,
                 "date_max": agg.date_max,
                 "transaction_ids": [e.transaction_id for e in agg.edges],

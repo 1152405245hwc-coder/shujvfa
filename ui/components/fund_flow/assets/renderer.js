@@ -301,12 +301,14 @@ export default function (component) {
     '<button type="button" data-ff="png">导出高清图</button>' +
     '</div>' +
     '<div class="ff-legend">' +
-    '<span class="ff-key"><i class="ff-node victim"></i>被害人 / 资金来源</span>' +
-    '<span class="ff-key"><i class="ff-node suspect"></i>涉案一级账户</span>' +
-    '<span class="ff-key"><i class="ff-line"></i>已纳入</span>' +
-    '<span class="ff-key"><i class="ff-line dashed"></i>争议项</span>' +
-    '<span class="ff-key"><i class="ff-line refund"></i>疑似转回</span>' +
-    '<span class="ff-key"><i class="ff-line excluded"></i>已排除</span>' +
+    '<span class="ff-key" data-ff-group="victim" title="点击高亮全部被害人账户，再次点击取消"><i class="ff-node victim"></i>被害人 / 资金来源</span>' +
+    '<span class="ff-key" data-ff-group="suspect" title="点击高亮全部涉案一级账户，再次点击取消"><i class="ff-node suspect"></i>涉案一级账户</span>' +
+    '<span class="ff-key" data-ff-group="disputed_account" title="点击高亮全部第三方争议账户，再次点击取消"><i class="ff-node disputed"></i>第三方争议账户</span>' +
+    '<span class="ff-key" data-ff-group="inc_edge" title="点击高亮全部已纳入流水，再次点击取消"><i class="ff-line"></i>已纳入</span>' +
+    '<span class="ff-key" data-ff-group="disputed_edge" title="点击高亮全部争议流水，再次点击取消"><i class="ff-line dashed"></i>争议项</span>' +
+    '<span class="ff-key" data-ff-group="pending_edge" title="点击高亮全部待核验流水，再次点击取消"><i class="ff-line pending"></i>待核验</span>' +
+    '<span class="ff-key" data-ff-group="refund_edge" title="点击高亮全部疑似转回流水，再次点击取消"><i class="ff-line refund"></i>疑似转回</span>' +
+    '<span class="ff-key" data-ff-group="excluded_edge" title="点击高亮全部已排除流水，再次点击取消"><i class="ff-line excluded"></i>已排除</span>' +
     '</div>' +
     '<div class="ff-tooltip"></div>';
 
@@ -703,17 +705,79 @@ export default function (component) {
     keep.forEach((el) => { if (el !== target) el.addClass('ff-neighbor'); });
   }
 
+  // 图例群体高亮：点击左下角图例，把同类账户/流水整组提亮、其余压暗，
+  // 让办案人员一次看清「全部争议流水」「全部疑似转回」这类群体分布，
+  // 不必逐条点选。再次点击同一图例或点击空白处取消。
+  const ffLegendKeys = Array.from(root.querySelectorAll('.ff-key[data-ff-group]'));
+  let ffActiveGroup = null;
+
+  function ffClearGroupFocus() {
+    ffActiveGroup = null;
+    ffLegendKeys.forEach((k) => k.classList.remove('ff-key-active'));
+  }
+
+  function ffGroupElements(group) {
+    if (group === 'victim' || group === 'suspect' || group === 'disputed_account') {
+      const role = group === 'disputed_account' ? 'third_party_disputed' : group;
+      let keep = cy.nodes(`[kind = "account"][display_role = "${role}"]`);
+      keep.forEach((n) => {
+        const accent = n.data('_accent');
+        if (accent) keep = keep.union(accent);
+      });
+      return keep;
+    }
+    let edges;
+    if (group === 'inc_edge') edges = cy.edges('[disposition = "INCLUDED"]');
+    else if (group === 'disputed_edge') edges = cy.edges('[disposition = "DISPUTED"]');
+    else if (group === 'pending_edge') edges = cy.edges('[disposition = "PENDING"]');
+    else if (group === 'excluded_edge') edges = cy.edges('[disposition = "EXCLUDED"]');
+    else if (group === 'refund_edge') edges = cy.edges('[?is_return]');
+    else return null;
+    let keep = edges;
+    edges.forEach((e) => {
+      keep = keep.union(e.source()).union(e.target());
+      const sa = e.source().data('_accent');
+      if (sa) keep = keep.union(sa);
+      const ta = e.target().data('_accent');
+      if (ta) keep = keep.union(ta);
+    });
+    return keep;
+  }
+
+  function ffApplyGroupFocus(group) {
+    cy.elements().unselect();
+    cy.elements().removeClass('ff-dim ff-neighbor');
+    ffActiveGroup = group;
+    ffLegendKeys.forEach((k) => k.classList.toggle('ff-key-active', k.dataset.ffGroup === group));
+    if (!group) return;
+    const keep = ffGroupElements(group);
+    if (!keep || keep.length === 0) return;
+    cy.elements().difference(keep).addClass('ff-dim');
+    // 只给流水加高亮样式：账户节点的被害人淡绿/嫌疑人淡红底色不能被洗掉。
+    keep.forEach((el) => { if (el.isEdge && el.isEdge()) el.addClass('ff-neighbor'); });
+  }
+
+  ffLegendKeys.forEach((k) => {
+    k.addEventListener('click', () => {
+      const group = k.dataset.ffGroup;
+      ffApplyGroupFocus(ffActiveGroup === group ? null : group);
+    });
+  });
+
   cy.on('tap', 'node[kind = "account"]', (evt) => {
+    ffClearGroupFocus();
     evt.target.select();
     ffApplyFocus(evt.target);
   });
   cy.on('tap', 'edge', (evt) => {
+    ffClearGroupFocus();
     evt.target.select();
     ffApplyFocus(evt.target);
   });
   cy.on('tap', (evt) => {
     if (evt.target === cy) {
       cy.elements().unselect();
+      ffClearGroupFocus();
       ffApplyFocus(null);
     }
   });

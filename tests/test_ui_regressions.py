@@ -150,6 +150,36 @@ class DeepSeekKeyConfigTest(unittest.TestCase):
         self.assertIn("请展开左侧【⚙ 模型与规则配置】粘贴密钥", source)
         self.assertIn("或切换回【本地模拟（推荐演示）】", source)
 
+class ReviewFlowRegressionTest(unittest.TestCase):
+    def test_supersedes_is_scoped_to_the_current_claim(self):
+        """多主张案件中，会话里保存的可能是另一主张的已签署决定；跨主张直接作为
+        supersedes 传入会触发 SUPERSEDES_CLAIM_MISMATCH，签署路径必须按主张过滤。"""
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn('getattr(prior_decision, "claim_id", None) == claim.id', source)
+        self.assertNotIn("supersedes=st.session_state.get(\"decision\")", source)
+        self.assertIn("复核版本链与当前主张不一致", source)
+
+    def test_multi_claim_progress_banner_is_shown_on_review_and_audit_pages(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn("def _render_multi_claim_progress(result, claims_list)", source)
+        self.assertIn("多主张案件进度提醒", source)
+        self.assertIn("HUMAN_CONFIRMED", source)
+        self.assertEqual(source.count("_render_multi_claim_progress(result, claims_list)"), 3)
+
+    def test_parse_completion_jumps_to_review_page_with_a_notice(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn('st.session_state["parse_notice"]', source)
+        self.assertIn('st.session_state["nav_page"] = PAGE_REVIEW', source)
+        self.assertIn('st.session_state.pop("parse_notice", None)', source)
+
+    def test_batch_toolbar_appears_once_with_task_framing(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertEqual(source.count("_render_candidate_batch_toolbar(candidates"), 2)
+        self.assertIn("一键套用系统建议", source)
+        self.assertIn("恢复初始建议", source)
+        self.assertIn("对候选流水逐笔作出处置决定", source)
+        self.assertNotIn("一键预填处置建议", source)
+
 
 
 if __name__ == "__main__":
