@@ -178,7 +178,7 @@ class NarrativeRenderingTest(unittest.TestCase):
         self.assertIn("一、全案审查意见摘要", html_output)
         # subsequent numbering shifts by one (no evidence conflicts in this fixture)
         self.assertIn("二、 涉案事实主张", html_output)
-        self.assertIn("三、 全案涉案资金流向穿透拓扑图谱", html_output)
+        self.assertIn("三、 全案涉案资金流向汇总表", html_output)
         self.assertIn("六、补充调查回查清单", html_output)
         # the narrative must read as the opening section, not sit after the tables
         self.assertLess(

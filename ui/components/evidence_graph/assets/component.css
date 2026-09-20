@@ -10,6 +10,32 @@
   font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
 }
 
+.eg-root.eg-expanded {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999999;
+  background: #f8fafc;
+}
+
+/* 与流水图同理：组件可能因 state 回传短暂重建，全屏态保持不透明底色。 */
+.eg-root.eg-expanded::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #f8fafc;
+  z-index: 0;
+}
+
+.eg-root.eg-expanded .eg-canvas,
+.eg-root.eg-expanded .eg-toolbar,
+.eg-root.eg-expanded .eg-legend,
+.eg-root.eg-expanded .eg-tooltip {
+  z-index: 1;
+}
+
 .eg-canvas {
   position: absolute;
   inset: 0;
@@ -46,12 +72,13 @@
   left: 10px;
   z-index: 10;
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 6px 14px;
   align-items: center;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid #e2e7ea;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: 13px;
   color: #55636e;
 }
 
@@ -59,6 +86,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  white-space: nowrap;
 }
 
 .eg-legend .eg-node {
@@ -71,6 +99,9 @@
 }
 
 .eg-legend .eg-node.person { border-color: #1f3a5f; border-radius: 50%; }
+.eg-legend .eg-node.victim { background: #eaf3ee; border-color: #276749; border-radius: 50%; }
+.eg-legend .eg-node.suspect { background: #fef2f2; border-color: #dc2626; border-radius: 50%; }
+.eg-legend .eg-node.third_party { border-color: #b07d2b; border-radius: 50%; }
 .eg-legend .eg-node.account { border-color: #10222f; border-radius: 0; }
 .eg-legend .eg-node.claim { border-color: #7a6c3f; transform: rotate(45deg); border-radius: 0; }
 .eg-legend .eg-node.evidence { border-color: #5b7a8c; border-radius: 3px; }

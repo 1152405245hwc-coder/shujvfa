@@ -84,7 +84,7 @@ class GuidedDemoRegressionTest(unittest.TestCase):
     def test_gold_guide_is_an_interactive_five_step_demo(self):
         source = APP_PATH.read_text(encoding="utf-8")
         self.assertIn("def _render_gold_guided_demo(guide)", source)
-        self.assertIn('"五步 Guided Demo"', source)
+        self.assertIn('"五步引导演示"', source)
         self.assertIn("_render_gold_guided_demo(guide)", source)
         self.assertIn('key="gold_demo_next"', source)
         self.assertIn('key="gold_demo_view"', source)
@@ -99,6 +99,56 @@ class GuidedDemoRegressionTest(unittest.TestCase):
         source = APP_PATH.read_text(encoding="utf-8")
         self.assertEqual(source.count('PAGE_GUIDE = "00  案件导读（评审）"'), 1)
         self.assertEqual(source.count("PAGES = ["), 1)
+
+    def test_fund_use_summary_is_wired_into_transactions_page(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn("def _render_fund_use_summary(result, claims, refund_txs)", source)
+        self.assertIn("_render_fund_use_summary(result, claims, refund_txs)", source)
+        self.assertIn("资金实际用途核验摘要", source)
+        self.assertIn("build_fund_use_summary", source)
+
+    def test_demo_context_bar_appears_on_evidence_pages(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn("def _render_demo_context_bar()", source)
+        self.assertGreaterEqual(source.count("_render_demo_context_bar()"), 5)
+        self.assertIn("gold_demo_return_step", source)
+        self.assertIn("返回导读", source)
+
+    def test_landing_copy_states_the_showcase_value(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            "90 秒体验：系统如何从 736.8 万元复杂流水中识别第三方代收、重复流水、资金去向与证据冲突。",
+            source,
+        )
+
+
+class DeepSeekKeyConfigTest(unittest.TestCase):
+    def test_session_key_entry_is_available_in_the_sidebar(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn('key="deepseek_api_key_input"', source)
+        self.assertIn('type="password"', source)
+        self.assertIn('key="test_deepseek_connection"', source)
+        self.assertIn("verify_connection()", source)
+
+    def test_key_is_auto_verified_when_entered(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn("Auto-verify each new key", source)
+        self.assertIn('st.session_state.get("deepseek_key_verified")', source)
+        self.assertIn("_verify_deepseek_key()", source)
+        # 结果紧跟输入框下方，不需用户点按钮就能看到连接状态
+        self.assertIn("st.success(message)", source)
+        self.assertIn("st.warning(message)", source)
+
+    def test_container_injected_key_stays_as_fallback(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn('DEEPSEEK_ENV_KEY = os.environ.get("DEEPSEEK_API_KEY", "")', source)
+        self.assertIn('os.environ["DEEPSEEK_API_KEY"] = DEEPSEEK_ENV_KEY', source)
+
+    def test_missing_key_error_is_actionable(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        self.assertIn('if "DEEPSEEK_API_KEY" in str(exc):', source)
+        self.assertIn("请展开左侧【⚙ 模型与规则配置】粘贴密钥", source)
+        self.assertIn("或切换回【本地模拟（推荐演示）】", source)
 
 
 

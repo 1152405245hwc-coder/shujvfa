@@ -102,3 +102,28 @@ class DeepSeekProvider:
             return spec.normalizer(parsed)
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"DeepSeek returned invalid structured data for {spec.name}: {exc}") from exc
+
+    def verify_connection(self, *, timeout: int = 10) -> tuple[bool, str]:
+        """Lightweight reachability/auth check; never raises and never leaks the key.
+
+        Uses the provider's own opener so unit tests can inject a fake response.
+        HTTP 429 is reported as reachable-but-throttled, which is still enough to
+        confirm the key itself was accepted.
+        """
+        request = urllib.request.Request(
+            f"{self.base_url}/models",
+            method="GET",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+        )
+        try:
+            with self._opener(request, timeout=timeout) as response:
+                response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                return False, f"API Key 无效或无权限（HTTP {exc.code}）"
+            if exc.code == 429:
+                return True, f"连接可达；当前限流（HTTP {exc.code}），请稍后重试"
+            return False, f"DeepSeek API 返回 HTTP {exc.code}"
+        except (urllib.error.URLError, TimeoutError, http.client.RemoteDisconnected, ConnectionError, OSError) as exc:
+            return False, f"无法连接 DeepSeek API：{type(exc).__name__}"
+        return True, "DeepSeek 连接成功，API Key 有效。"

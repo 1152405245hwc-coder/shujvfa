@@ -179,8 +179,8 @@ class OCRAndTopologyTest(unittest.TestCase):
         self.assertIn("graph LR", report["fund_flow_topology"])
 
         html_out = report_to_html(report)
-        self.assertIn("资金流向穿透拓扑图谱", html_out)
-        self.assertIn("mermaid", html_out)
+        self.assertIn("资金流向汇总表", html_out)
+        self.assertIn("转出方", html_out)
 
 
 if __name__ == "__main__":

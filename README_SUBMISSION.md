@@ -48,7 +48,18 @@ docker run --rm \
 
 - 仓库内**不含任何真实 API Key**；`.env.example` 中所有 Key 均为空。
 - 默认 `LLM_PROVIDER=mock`，完全离线运行，评审零配置即可体验全部流程。
-- 如需接入真实 LLM（可选，非必需），运行时注入环境变量：
+
+### 方式一（推荐）：页面内粘贴 Key（仅本次会话）
+
+1. 启动容器后打开 `http://localhost:8501`
+2. 展开左侧【⚙ 模型与规则配置】
+3. 「模型服务」选择 DeepSeek API
+4. 在「DeepSeek API Key（仅本次会话）」粘贴 Key
+5. 点击【测试连接】，确认返回「DeepSeek 连接成功」
+
+Key 只保存在当前浏览器会话与容器内存中，不写入磁盘、数据库或导出文件；刷新浏览器后需重新粘贴。若评审方统一分发 Key，这是最简单的接入方式。
+
+### 方式二：容器启动时注入环境变量
 
 ```bash
 docker run --rm -p 8501:8501 \
@@ -56,6 +67,8 @@ docker run --rm -p 8501:8501 \
   -e DEEPSEEK_API_KEY=<评审方自备 Key> \
   legal-funds-agent
 ```
+
+注：当前版本不会自动读取项目目录下的 `.env` 文件；`.env.example` 仅为说明用途。
 
 ## 数据与知识库来源说明
 

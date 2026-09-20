@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
@@ -89,6 +90,62 @@ _STATUS_LABELS: dict[str, str] = {
     "current_decision": "当前决策口径（人工确认为准；未人工签署的主张暂按系统拟制统计，不等于已确证）",
     "system": "系统拟制",
     "human": "人工确认",
+    # 匹配等级与比对结论
+    "EXACT": "完全吻合",
+    "FUZZY": "模糊匹配",
+    "MISMATCH": "不吻合",
+    "UNAVAILABLE": "无数据可比对",
+    "PARTIAL": "部分金额",
+    "EXCEEDS": "超出指控金额",
+    "NO_MATCH": "金额不对应",
+    "WINDOW": "在指控时间窗内",
+    # 汇总口径与排序依据
+    "canonical_event": "按交易事件去重",
+    "forward": "时间向后",
+    "backward": "时间向前",
+    "unordered": "无法排序",
+    "start": "起点交易",
+    "date_forward": "日期更晚",
+    "time_forward": "同日时间更晚",
+    "same_day_without_time": "同日且无具体时间，无法排序",
+    "exact_account_only": "仅按精确账户关联",
+    # 提供状态 / 确认状态 / 来源类型
+    "provided": "已提供",
+    "not_provided": "未提供",
+    "confirmed": "已确认",
+    "unconfirmed": "未确认",
+    "checklist": "核查清单",
+    "supplemental": "补充登记",
+    "tool": "工具生成",
+    # 筛选口径与执行状态
+    "all": "全部",
+    "pending": "待处理",
+    "checked": "已核查",
+    "success": "成功",
+    "error": "失败",
+    # 提取状态
+    "model_extracted": "模型提取",
+    "human_confirmed": "人工确认",
+    "human_corrected": "人工更正",
+    "extraction_review_required": "提取待复核",
+    # 归属与证据定位类型
+    "candidate": "确定性候选",
+    "weak_signal": "弱付款人线索",
+    "context": "结合上下文",
+    "explicit": "材料明确记载",
+    "text_span": "文本区间",
+    "table_row": "表格行",
+    "csv_row": "表格行",
+    # 候选命中规则码（与审查页规则说明一致）
+    "M01": "M01 付款账号精准吻合",
+    "M02": "M02 付款人姓名匹配",
+    "M03": "M03 收款账号精准吻合",
+    "M04": "M04 收款人姓名匹配",
+    "M05": "M05 日期在指控期内",
+    "M06": "M06 日期在容差期内",
+    "M07": "M07 金额完全吻合",
+    "M08": "M08 分笔部分支付",
+    "M09": "M09 单笔超出指控",
 }
 
 # 用于生成「为什么没有计入」的系统口径说明。只说明系统规则，不新增任何数值。
@@ -133,6 +190,77 @@ _FIELD_LABELS = {
     "candidates": "候选流水", "weak_signals": "弱付款人线索",
     "reviewed_transactions": "已复核流水", "transactions": "流水",
     "items": "事项", "claims": "主张", "sources": "证据定位",
+    # 案件概况与汇总
+    "raw": "原始行数", "canonical": "去重后事件数",
+    "fully_corroborated_count": "完全印证笔数",
+    "partially_corroborated_count": "部分印证笔数",
+    "unsupported_count": "未获支持笔数", "conflicting_count": "存在矛盾笔数",
+    "cross_claim_errors": "跨主张冲突", "unique_canonical_count": "去重后笔数",
+    "amount_total": "金额合计", "blocking_count": "阻断笔数",
+    "blocking_amount_total": "阻断金额合计", "cross_claim_claim_ids": "涉及的主张编号",
+    "counted": "是否计入", "duplicate_transaction_groups": "重复流水分组",
+    "human_review": "人工复核", "decision_source": "决策来源",
+    "decision_from": "决策依据", "reviewer": "复核人",
+    "claims_without_decision": "尚无决策的主张",
+    "statement_conflicts_by_claim": "各主张的陈述矛盾",
+    "statement_extraction": "陈述提取", "warnings": "提示",
+    "fact_available_by_claim": "各主张事实可用性",
+    "review_required_reasons": "需要复核的原因",
+    "summary": "汇总", "refunds": "疑似转回",
+    # 待核查事项
+    "status_filter": "筛选口径", "returned_count": "本次返回条数",
+    "investigation_status_provided": "是否提供核查状态",
+    "alias_proposal_status": "别名候选状态", "pending_alias_count": "待确认别名数",
+    "pending": "待处理", "checked": "已核查", "by_priority": "按优先级",
+    "evidence_refs": "证据引用", "facts": "事实要点",
+    "wording_source": "表述来源", "origin": "来源", "conflicts": "矛盾点",
+    "claim_ids": "主张编号列表", "errors": "错误", "transaction_ids": "流水号列表",
+    "counts": "统计",
+    # 流水查询
+    "matched_count": "命中笔数", "matched_amount_sum": "命中金额合计",
+    "amount_sum": "金额合计", "sum_basis": "合计口径", "sum_note": "合计说明",
+    "membership_note": "归属说明", "filters": "筛选条件",
+    "payer": "付款人", "payee": "收款人",
+    "payer_account": "付款账户", "payee_account": "收款账户",
+    "date_start": "起始日期", "date_end": "截止日期",
+    "amount_min": "最小金额", "amount_max": "最大金额",
+    "risk_code": "风险码", "risk_codes": "风险码", "tx_id": "流水号",
+    "payer_account_id": "付款账户编号", "payee_account_id": "收款账户编号",
+    "currency": "币种", "remark": "摘要", "canonical_event_ref": "交易事件标识",
+    "mirror_count": "镜像笔数", "mirror_source_refs": "镜像来源",
+    "membership": "归属情况", "is_candidate": "是否候选",
+    "is_weak_signal": "是否弱信号", "candidate_claim_ids": "所属候选主张",
+    "weak_signal_claim_ids": "所属弱信号主张", "blocking_conflict": "阻断冲突",
+    # 资金流向追溯
+    "direction": "追溯方向", "link_basis": "关联依据", "link_note": "关联说明",
+    "start": "起点", "account_id": "账户编号", "account": "账户",
+    "depth_reached": "实际到达深度", "path": "确定链路", "path_note": "链路说明",
+    "subsequent_related_flows": "后续相关流水", "subsequent_note": "后续流水说明",
+    "commingling_boundary": "混同边界", "boundary_note": "边界说明",
+    "total_flows": "流水总数", "result_cap": "结果上限",
+    "from_account": "转出账户", "from_account_id": "转出账户编号", "from_name": "转出人",
+    "to_account": "转入账户", "to_account_id": "转入账户编号", "to_name": "转入人",
+    "parent_transaction_id": "上游流水号", "ordering": "排序",
+    "ordering_basis": "排序依据", "chain": "链路", "certainty": "确定性",
+    "inbound_count": "流入笔数", "inbound_amount": "流入金额",
+    "outbound_count": "流出笔数", "outbound_amount": "流出金额",
+    "traced_outbound_count": "已追溯流出笔数", "commingled": "是否混同",
+    # 证据来源
+    "source_kind": "来源类型", "relation": "关联方式", "filename": "文件名",
+    "assertion_level": "指称级别", "is_proof": "是否单独证明",
+    "proves": "能支持的内容", "disputed": "是否有争议",
+    "refs": "引用", "label": "标签",
+    # 主张明细
+    "claim": "主张", "decision": "复核结论",
+    "victim_account": "被害人账户", "alleged_recipient_account": "指控收款账户",
+    "extraction_status": "提取状态", "source_locator_ids": "证据定位编号",
+    "source_locators": "证据定位", "rows": "行明细", "decision_id": "决策编号",
+    "version": "版本", "reason_codes": "处置理由码", "reviewed_at": "复核时间",
+    "verification_error_codes": "核验问题码", "disposition_counts": "处置统计",
+    "statement": "被害人陈述", "fact": "指控事实",
+    "payer_match": "付款人匹配", "payee_match": "收款人匹配",
+    "amount_match": "金额匹配", "date_match": "日期匹配",
+    "matched_rules": "命中规则",
 }
 
 TRACE_FOOTER = (
@@ -402,8 +530,8 @@ def _execute(context: Any, registry: Any, steps: list[dict[str, Any]]) -> tuple[
                 "status": "error",
             })
             warnings.append(
-                f"TOOL_EXECUTION_FAILED：{name}（{type(exc).__name__}）："
-                "该步骤执行失败，后续步骤未执行；失败原因正文不记录，以免泄露凭据或原始响应。"
+                f"工具「{name}」执行失败（异常类型：{type(exc).__name__}），"
+                "后续步骤未执行；失败原因正文不记录，以免泄露凭据或原始响应。"
             )
             return results, audit, warnings
         audit.append({
@@ -630,7 +758,7 @@ def _summarize_result(name: str, result: dict[str, Any]) -> list[str]:
                 f"本次返回 {result.get('returned_count', 0)} 笔。"
             )
         if result.get("has_more"):
-            lines.append("结果未取完，可用 offset 继续分页。")
+            lines.append("结果未取完，可在查询条件中调大跳过条数继续翻页。")
         return lines
 
     if name == "trace_fund_flow":
@@ -678,7 +806,7 @@ def _render_answer(question: str, results: list[dict[str, Any]],
     for item in results:
         name = item["tool_name"]
         blocks.append("")
-        blocks.append(f"· {TOOL_LABELS.get(name, name)}（{name}）")
+        blocks.append(f"· {TOOL_LABELS.get(name, name)}")
         blocks.extend(_render_node(item["result"], "  ", seen_values, boundary_hits))
         summary = _summarize_result(name, item["result"])
         if summary:
@@ -697,7 +825,7 @@ def _render_answer(question: str, results: list[dict[str, Any]],
         lead.extend(["", note])
     if boundary:
         lead.extend(["", boundary])
-        warnings.append(f"TRACE_BOUNDARY：{boundary}")
+        warnings.append(f"触及追溯边界：{boundary}")
     if lead:
         blocks = blocks[:1] + lead + blocks[1:]
     blocks.extend(["", TRACE_FOOTER])
@@ -726,9 +854,40 @@ def _envelope(*, mode: str, answer: str, results: list[dict[str, Any]] | None = 
     }
 
 
+_REJECTION_PATTERN = re.compile(r"^([A-Z_]+)(?::([^@]+))?@(\d+)(?::(.+))?$")
+
+
+def _rejection_label(code: str) -> str:
+    """Translate an internal rejection code into a Chinese explanation.
+
+    Codes stay English inside the structured record (stable for tooling); anything a
+    reviewer reads — the answer text and warnings — goes through this map.
+    """
+    match = _REJECTION_PATTERN.match(code)
+    if not match:
+        return code
+    kind, detail, index, extra = match.groups()
+    step = f"第 {index} 步"
+    if kind == "UNKNOWN_TOOL":
+        return f"{step}：工具「{detail}」不在只读工具目录中"
+    if kind == "WRITE_TOOL":
+        return f"{step}：工具「{detail}」不是只读工具，可能改变案件状态"
+    if kind == "CROSS_CASE_ARGUMENT":
+        return f"{step}：参数「{detail}」试图访问当前案件之外的数据"
+    if kind == "FORBIDDEN_ARGUMENT":
+        return f"{step}：参数「{detail}」属于禁止项（文件路径、数据库、网络地址等）"
+    if kind == "UNKNOWN_ARGUMENT":
+        return f"{step}：参数「{detail}」不在该工具允许的参数范围内"
+    if kind == "DUPLICATE_STEP":
+        return f"{step}：与前面的步骤完全重复"
+    if kind == "INVALID_ARGUMENTS":
+        return f"{step}：工具「{detail}」的参数未通过校验（异常类型：{extra or '未知'}）"
+    return code
+
+
 def _rejection_answer(prefix: str, rejections: list[str]) -> str:
     return (
-        f"{prefix}未通过只读安全预校验（" + "、".join(rejections) + "），"
+        f"{prefix}未通过只读安全预校验（" + "、".join(_rejection_label(r) for r in rejections) + "），"
         "已整单拒绝且未执行任何查询，因此没有任何部分结果。请检查工具名与参数后重试。"
     )
 
@@ -741,7 +900,10 @@ def _run_shortcut(context: Any, registry: Any, catalog: dict[str, dict[str, Any]
         return _envelope(
             mode=MODE_SHORTCUT,
             answer=_rejection_answer("快捷查询", rejections),
-            warnings=["QUERY_REJECTED：" + "、".join(rejections) + "：已整单拒绝，未执行任何查询。"],
+            warnings=[
+                "快捷查询未通过只读安全预校验：" + "、".join(_rejection_label(r) for r in rejections)
+                + "；已整单拒绝，未执行任何查询。"
+            ],
         )
     results, audit, warnings = _execute(context, registry, steps)
     answer, extra = _render_answer(question, results, MODE_SHORTCUT)
@@ -755,7 +917,7 @@ def _run_planned(context: Any, registry: Any, catalog: dict[str, dict[str, Any]]
         return _envelope(
             mode=MODE_NATURAL_LANGUAGE,
             answer=_NO_MODEL_ANSWER,
-            warnings=["PROVIDER_UNAVAILABLE：未选择可联网模型，自然语言查询不会联网；请改用快捷查询。"],
+            warnings=["未选择可联网模型，自然语言查询不会联网；请改用快捷查询（离线可用）。"],
         )
     if not supports_schema(provider, SCHEMA_CASE_QUERY_PLAN):
         return _envelope(
@@ -765,8 +927,7 @@ def _run_planned(context: Any, registry: Any, catalog: dict[str, dict[str, Any]]
                 "更没有生成替代答案。请改用快捷查询，它们完全在本地只读执行。"
             ),
             warnings=[
-                "PLAN_SCHEMA_UNSUPPORTED：当前 provider 不支持只读查询计划契约；"
-                "请改用快捷查询（离线可用）。"
+                "当前模型不支持只读查询计划契约；请改用快捷查询（离线可用）。"
             ],
         )
 
@@ -786,7 +947,7 @@ def _run_planned(context: Any, registry: Any, catalog: dict[str, dict[str, Any]]
                 "请稍后重试，或改用快捷查询。失败原因只记录异常类型，不记录响应正文或凭据。"
             ),
             warnings=[
-                f"PLAN_CALL_FAILED:{type(exc).__name__}：模型规划失败，未执行任何查询，也未代为作答。"
+                f"模型规划调用失败（异常类型：{type(exc).__name__}），未执行任何查询，也未代为作答。"
             ],
         )
 
@@ -797,7 +958,7 @@ def _run_planned(context: Any, registry: Any, catalog: dict[str, dict[str, Any]]
                 "现有只读工具无法回答该问题，因此没有执行任何查询，也没有生成推断性答案。"
                 "请把问题缩小到具体主张、流水或待核查事项，或改用快捷查询。"
             ),
-            warnings=["EMPTY_PLAN：模型判定该问题无法用当前只读工具回答，未执行任何查询。"],
+            warnings=["模型判定该问题无法用当前只读工具回答，未执行任何查询。"],
         )
     if len(plan) > MAX_PLAN_STEPS:
         return _envelope(
@@ -806,7 +967,7 @@ def _run_planned(context: Any, registry: Any, catalog: dict[str, dict[str, Any]]
                 f"模型返回的查询计划超过 {MAX_PLAN_STEPS} 步上限，已整单拒绝，未执行任何查询。"
                 "请把问题拆成更具体的单一问题，或改用快捷查询。"
             ),
-            warnings=[f"PLAN_TOO_LONG：计划超过 {MAX_PLAN_STEPS} 步上限，已整单拒绝，未执行任何查询。"],
+            warnings=[f"查询计划超过 {MAX_PLAN_STEPS} 步上限，已整单拒绝，未执行任何查询。"],
         )
 
     rejections = _validate_plan(context, registry, plan, catalog)
@@ -814,7 +975,10 @@ def _run_planned(context: Any, registry: Any, catalog: dict[str, dict[str, Any]]
         return _envelope(
             mode=MODE_NATURAL_LANGUAGE,
             answer=_rejection_answer("查询计划", rejections),
-            warnings=["PLAN_REJECTED：" + "、".join(rejections) + "：已整单拒绝，未执行任何查询。"],
+            warnings=[
+                "查询计划未通过只读安全预校验：" + "、".join(_rejection_label(r) for r in rejections)
+                + "；已整单拒绝，未执行任何查询。"
+            ],
         )
 
     results, audit, warnings = _execute(context, registry, plan)
@@ -846,7 +1010,7 @@ def run_case_query(context: Any, question: str, provider: LLMProvider | None = N
         return _envelope(
             mode=MODE_NATURAL_LANGUAGE,
             answer="请输入具体问题，或使用快捷查询。",
-            warnings=["EMPTY_QUESTION：请输入具体问题，或使用快捷查询。"],
+            warnings=["请输入具体问题，或使用快捷查询。"],
         )
 
     return _run_planned(context, registry, catalog, question, provider)

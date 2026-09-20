@@ -79,5 +79,49 @@ class DeepSeekProviderTest(unittest.TestCase):
         self.assertEqual(call_count, 1)
 
 
+class VerifyConnectionTest(unittest.TestCase):
+    def _provider(self, opener):
+        return DeepSeekProvider(api_key="test-only", base_url="https://example.invalid", model="model-test", opener=opener)
+
+    def test_reports_success_with_bearer_header_and_default_timeout(self):
+        captured = {}
+
+        def opener(request, timeout):
+            captured["header"] = request.get_header("Authorization")
+            captured["timeout"] = timeout
+            return FakeResponse({"data": []})
+
+        ok, message = self._provider(opener).verify_connection()
+        self.assertTrue(ok)
+        self.assertIn("连接成功", message)
+        self.assertEqual(captured["header"], "Bearer test-only")
+        self.assertEqual(captured["timeout"], 10)
+
+    def test_reports_invalid_key_without_raising(self):
+        def opener(request, timeout):
+            raise urllib.error.HTTPError("https://x", 401, "Unauthorized", {}, None)
+
+        ok, message = self._provider(opener).verify_connection()
+        self.assertFalse(ok)
+        self.assertIn("401", message)
+        self.assertIn("Key", message)
+
+    def test_reports_throttling_as_reachable(self):
+        def opener(request, timeout):
+            raise urllib.error.HTTPError("https://x", 429, "Too Many Requests", {}, None)
+
+        ok, message = self._provider(opener).verify_connection()
+        self.assertTrue(ok)
+        self.assertIn("限流", message)
+
+    def test_reports_network_failure_without_raising(self):
+        def opener(request, timeout):
+            raise urllib.error.URLError("connection refused")
+
+        ok, message = self._provider(opener).verify_connection()
+        self.assertFalse(ok)
+        self.assertIn("无法连接", message)
+
+
 if __name__ == "__main__":
     unittest.main()

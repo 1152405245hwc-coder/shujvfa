@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 import csv
 import html
 import io
@@ -27,6 +28,7 @@ def build_report(claim: Claim, decision: ReviewDecision, transactions: dict[str,
                  statement_conflicts: list[str] | None = None,
                  duplicate_groups: dict[str, list[str]] | None = None) -> dict[str, Any]:
     from legal_funds_agent.services.topology_service import build_fund_flow_topology, generate_mermaid_graph
+    from legal_funds_agent.services.case_report_service import _fund_flow_table_rows
 
     claim_payload = claim.model_dump(mode="json")
     claim_payload["victim_account"] = _mask_account(claim.victim_account)
@@ -58,11 +60,17 @@ def build_report(claim: Claim, decision: ReviewDecision, transactions: dict[str,
         "included_transactions": [_export_transaction(transactions[tid]) for tid in decision.included_transaction_ids],
         "reviewed_transactions": actions,
         "fund_flow_topology": mermaid_code,
+        "fund_flow_table": _fund_flow_table_rows(topology),
     }
 
 
 def report_to_json(report: dict[str, Any]) -> str:
-    return json.dumps(report, ensure_ascii=False, indent=2)
+    def encode(value: Any) -> str:
+        if isinstance(value, Decimal):
+            return f"{value.quantize(Decimal('0.01')):.2f}"
+        raise TypeError(f"Unsupported report value: {type(value).__name__}")
+
+    return json.dumps(report, ensure_ascii=False, indent=2, default=encode)
 
 
 def report_to_csv(report: dict[str, Any]) -> str:
@@ -115,27 +123,22 @@ def report_to_html(report: dict[str, Any]) -> str:
         f"<td>{tx.get('source_row', '')}</td></tr>"
         for tx in report["reviewed_transactions"]
     )
-    topology_mermaid = report.get("fund_flow_topology", "")
+    flow_rows = "".join(
+        f"<tr><td>{html.escape(str(row['from_party']))}</td>"
+        f"<td>{html.escape(str(row['to_party']))}</td>"
+        f"<td style='text-align:center;'>{row['count']}</td>"
+        f"<td>¥{row['total_amount']:,.2f}</td>"
+        f"<td>{html.escape(str(row['date_range'] or '-'))}</td>"
+        f"<td><strong>{html.escape(str(row['disposition']))}</strong></td></tr>"
+        for row in report.get("fund_flow_table", [])
+    )
     disp_status = status_map.get(decision.get("status"), decision.get("status", ""))
     return f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>资金证据审查底稿</title>
-<style>body{{font:14px Arial,"Microsoft YaHei",sans-serif;margin:40px;color:#202124}}h1{{font-size:22px}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #c9cdd2;padding:8px;text-align:left}}th{{background:#f3f4f6}}.notice{{border-left:4px solid #b45309;padding:10px;background:#fff7ed}}.topology-card{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:16px;margin:20px 0}}</style>
-<script type="module">
-(async () => {{
-  try {{
-    const mod = await import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs');
-    mod.default.initialize({{ startOnLoad: true }});
-  }} catch (e) {{
-    document.querySelectorAll('pre.mermaid').forEach(el => {{
-      const wrapper = document.createElement('div');
-      wrapper.innerHTML = '<p style="color:#b45309;font-size:12px;margin-bottom:8px;">（图谱组件加载失败，显示文本源）</p><pre style="background:#f8fafc;border:1px solid #cbd5e1;padding:12px;overflow:auto;">' + el.textContent.replace(/</g, '&lt;') + '</pre>';
-      el.parentNode.replaceChild(wrapper, el);
-    }});
-  }}
-}})();
-</script>
+<style>body{{font:14px "Microsoft YaHei","PingFang SC",sans-serif;margin:40px;color:#202124}}h1{{font-size:22px}}table{{border-collapse:collapse;width:100%}}th,td{{border:1px solid #c9cdd2;padding:8px;text-align:left}}th{{background:#f3f4f6}}.notice{{border-left:4px solid #b45309;padding:10px;background:#fff7ed}}.topology-card{{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:16px;margin:20px 0}}</style>
 <body><h1>资金证据审查底稿</h1><p class="notice">{html.escape(report['disclaimer'])}</p>
 <p>案件：{html.escape(report['case_id'])}</p><p>复核状态：<strong>{html.escape(disp_status)}</strong></p>
 <p>资金证据覆盖金额：¥{float(decision['covered_amount']):,.2f}；未覆盖金额：¥{float(decision['uncovered_amount']):,.2f}</p>
-<h2>资金流向穿透拓扑图谱</h2>
-<div class="topology-card"><pre class="mermaid">{html.escape(topology_mermaid)}</pre></div>
+<h2>资金流向汇总表</h2>
+<p style="color:#64748b;font-size:13px;">按「转出方 → 转入方 → 处置状态」聚合；交互式图谱请在系统内【涉案资金流水】页查看。</p>
+<div class="topology-card"><table><thead><tr><th>转出方</th><th>转入方</th><th style="width:60px;text-align:center;">笔数</th><th>合计金额</th><th>日期范围</th><th>处置状态</th></tr></thead><tbody>{flow_rows or '<tr><td colspan="6" style="text-align:center;color:#64748b;">复核范围内暂无资金流转记录</td></tr>'}</tbody></table></div>
 <h2>逐笔复核记录</h2><table><thead><tr><th>交易号</th><th>日期</th><th>付款人</th><th>收款人</th><th>金额</th><th>处置决断</th><th>处置理由</th><th>来源行</th></tr></thead><tbody>{rows}</tbody></table></body></html>"""

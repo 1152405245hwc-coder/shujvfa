@@ -15,11 +15,23 @@ const EG_TYPE_COLORS = {
 };
 
 const EG_NODE_W = 230;
-const EG_NODE_H = 78;
+const EG_NODE_H = 88;
 
 const EG_WHEEL_STEP = 1.25;
 
 const EG_VIEWPORTS = (window.__egViewports = window.__egViewports || {});
+const EG_EXPANDED = (window.__egExpanded = window.__egExpanded || {});
+
+function egSetExpanded(root, canvas, fsBtn, cy, viewKey, viewH, on) {
+  root.classList.toggle('eg-expanded', on);
+  if (fsBtn) fsBtn.textContent = on ? '退出全屏' : '全屏阅览';
+  document.body.style.overflow = on ? 'hidden' : '';
+  const px = on ? window.innerHeight : viewH;
+  root.style.height = px + 'px';
+  canvas.style.height = px + 'px';
+  if (cy && !cy.destroyed()) cy.resize();
+  EG_EXPANDED[viewKey] = !!on;
+}
 
 function egPartition(type) {
   if (type === 'person') return 0;
@@ -214,9 +226,12 @@ export default function (component) {
     '<button type="button" data-eg="fit">适配视图</button>' +
     '<button type="button" data-eg="reset">重置缩放</button>' +
     '<button type="button" data-eg="png">导出高清图</button>' +
+    '<button type="button" data-eg="fullscreen">全屏阅览</button>' +
     '</div>' +
     '<div class="eg-legend">' +
-    '<span class="eg-key"><i class="eg-node person"></i>人物</span>' +
+    '<span class="eg-key"><i class="eg-node victim"></i>被害人</span>' +
+    '<span class="eg-key"><i class="eg-node suspect"></i>嫌疑人</span>' +
+    '<span class="eg-key"><i class="eg-node third_party"></i>第三方</span>' +
     '<span class="eg-key"><i class="eg-node account"></i>账户</span>' +
     '<span class="eg-key"><i class="eg-node claim"></i>付款主张</span>' +
     '<span class="eg-key"><i class="eg-node evidence"></i>证据材料</span>' +
@@ -245,6 +260,7 @@ export default function (component) {
       data: {
         id: n.id,
         type: n.type,
+        shape: egShape(n.type),
         partition: egPartition(n.type),
         name: n.name,
         label: n.label || n.name,
@@ -293,7 +309,7 @@ export default function (component) {
       {
         selector: 'node',
         style: {
-          shape: 'data(type)',
+          shape: 'data(shape)',
           width: 'data(node_w)',
           height: 'data(node_h)',
           'background-color': '#ffffff',
@@ -302,7 +318,8 @@ export default function (component) {
           label: 'data(display)',
           'text-wrap': 'wrap',
           'text-max-width': String(EG_NODE_W - 24) + 'px',
-          'font-size': 13,
+          'font-size': 15,
+          'font-weight': 600,
           'line-height': 1.4,
           color: EG_COLORS.ink,
           'text-valign': 'center',
@@ -313,6 +330,29 @@ export default function (component) {
       {
         selector: 'node[type = "person"]',
         style: { 'border-color': EG_TYPE_COLORS.person },
+      },
+      {
+        selector: 'node[type = "person"][role = "victim"]',
+        style: {
+          'background-color': '#eaf3ee',
+          'border-color': '#276749',
+          'border-width': 1.5,
+        },
+      },
+      {
+        selector: 'node[type = "person"][role = "suspect"]',
+        style: {
+          'background-color': '#fef2f2',
+          'border-color': '#dc2626',
+          'border-width': 1.5,
+        },
+      },
+      {
+        selector: 'node[type = "person"][role = "third_party"]',
+        style: {
+          'border-color': '#b07d2b',
+          'border-width': 1.5,
+        },
       },
       {
         selector: 'node[type = "account"]',
@@ -336,7 +376,8 @@ export default function (component) {
           'arrow-scale': 0.8,
           'curve-style': 'bezier',
           label: 'data(amount_label)',
-          'font-size': 11,
+          'font-size': 13,
+          'font-weight': 600,
           color: EG_COLORS.label,
           'text-background-color': '#fdfdfb',
           'text-background-opacity': 1,
@@ -355,7 +396,7 @@ export default function (component) {
       },
       {
         selector: 'node:selected',
-        style: { 'border-width': 2, 'border-color': EG_COLORS.navy },
+        style: { 'border-width': 2.5, 'border-color': EG_COLORS.gold },
       },
       {
         selector: 'edge:selected',
@@ -368,6 +409,19 @@ export default function (component) {
       {
         selector: 'node.eg-neighbor',
         style: { 'border-width': 2, 'background-color': '#eef3f8' },
+      },
+      {
+        // 邻居高亮不能洗掉被害人/嫌疑人的角色底色。
+        selector: 'node.eg-neighbor[role = "victim"]',
+        style: { 'background-color': '#eaf3ee', 'border-color': EG_COLORS.gold },
+      },
+      {
+        selector: 'node.eg-neighbor[role = "suspect"]',
+        style: { 'background-color': '#fef2f2', 'border-color': EG_COLORS.gold },
+      },
+      {
+        selector: 'node.eg-neighbor[role = "third_party"]',
+        style: { 'border-color': EG_COLORS.gold },
       },
       {
         selector: 'edge.eg-neighbor',
@@ -448,6 +502,21 @@ export default function (component) {
     a.download = '案件关系图.png';
     a.click();
   });
+  // 全屏阅览：与资金流向图同一模式——根节点切成 fixed 覆盖层，仍是同一个
+  // 活图实例（缩放、平移、点选、悬浮提示完全一致），Esc 或再点一次退出。
+  const fsBtn = root.querySelector('[data-eg="fullscreen"]');
+  const setExpanded = (on) => {
+    egSetExpanded(root, canvas, fsBtn, cy, viewKey, viewH, on);
+    cy.fit(undefined, 24);
+  };
+  fsBtn.addEventListener('click', () => setExpanded(!root.classList.contains('eg-expanded')));
+  document.addEventListener('keydown', (evt) => {
+    if (evt.key === 'Escape' && root.classList.contains('eg-expanded')) setExpanded(false);
+  });
+  cy.on('destroy', () => {
+    if (EG_EXPANDED[viewKey]) document.body.style.overflow = '';
+  });
+  if (EG_EXPANDED[viewKey]) setExpanded(true);
 
   function moveTip(evt) {
     const rect = root.getBoundingClientRect();

@@ -16,7 +16,12 @@ from legal_funds_agent.llm.schemas import (
     supports_schema,
 )
 from legal_funds_agent.services.verification_engine import CaseReviewSummary, summarize_case_reviews
-from legal_funds_agent.services.topology_service import build_fund_flow_topology, generate_mermaid_graph
+from legal_funds_agent.services.topology_service import (
+    TopologyGraph,
+    aggregate_topology_edges,
+    build_fund_flow_topology,
+    generate_mermaid_graph,
+)
 from legal_funds_agent.services.transaction_analysis import identify_refund_transactions
 
 DISCLAIMER = "本结果仅反映当前导入材料之间的资金证据对应与闭环覆盖情况，不替代司法机关的最终定罪量刑与犯罪金额认定。"
@@ -57,6 +62,38 @@ REVIEW_STATUS_LABELS = {
     "UNSUPPORTED": "暂无流水证据支持",
     "PENDING_REVIEW": "待人工复核",
 }
+
+# 资金流转表用的处置标签：比 DISPOSITION_LABELS 多一个拓扑图特有的「疑似转回」。
+FLOW_DISPOSITION_LABELS = {
+    **DISPOSITION_LABELS,
+    "REFUND": "疑似转回流水",
+}
+
+
+def _fund_flow_table_rows(topology: TopologyGraph) -> list[dict[str, Any]]:
+    """Flatten the aggregated topology into a printable Chinese fund-flow table.
+
+    Every figure is copied from the deterministic topology (edges already grouped by
+    source → target → disposition); nothing is recomputed here.
+    """
+    rows: list[dict[str, Any]] = []
+    for agg in aggregate_topology_edges(topology):
+        source = topology.nodes.get(agg.source_id)
+        target = topology.nodes.get(agg.target_id)
+        dates = [edge.date_str for edge in agg.edges if edge.date_str]
+        date_range = ""
+        if dates:
+            earliest, latest = min(dates), max(dates)
+            date_range = earliest if earliest == latest else f"{earliest} 至 {latest}"
+        rows.append({
+            "from_party": source.display_label if source else agg.source_id,
+            "to_party": target.display_label if target else agg.target_id,
+            "count": agg.count,
+            "total_amount": agg.total_amount,
+            "date_range": date_range,
+            "disposition": FLOW_DISPOSITION_LABELS.get(agg.disposition, agg.disposition),
+        })
+    return rows
 
 
 from legal_funds_agent.utils import mask_account as _mask_account
@@ -546,6 +583,7 @@ def build_case_master_report(
         "reviewed_transactions": all_actions,
         "refund_transactions": refund_records,
         "fund_flow_topology": mermaid_code,
+        "fund_flow_table": _fund_flow_table_rows(topology),
         "investigation_checklist": checklist,
         "evidence_conflicts": evidence_conflicts,
         # Extraction-quality signals. Deliberately outside ``data_integrity_sha256``:
@@ -611,6 +649,18 @@ def case_report_to_html(report: dict[str, Any]) -> str:
         f"<td>{html.escape(reason_map.get(tx.get('reason_code'), tx.get('reason_code') or '-'))}</td>"
         f"<td>{html.escape(tx.get('review_note') or '')}</td></tr>"
         for tx in report["reviewed_transactions"]
+    )
+
+    # Aggregated fund-flow table (deterministic replacement for the old mermaid block:
+    # a printed workbook must stay readable without any network-loaded diagram library)
+    flow_rows = "".join(
+        f"<tr><td>{html.escape(str(row['from_party']))}</td>"
+        f"<td>{html.escape(str(row['to_party']))}</td>"
+        f"<td style='text-align:center;'>{row['count']}</td>"
+        f"<td style='color:#0f172a;font-weight:700;'>¥{row['total_amount']:,.2f}</td>"
+        f"<td>{html.escape(str(row['date_range'] or '-'))}</td>"
+        f"<td><strong>{html.escape(str(row['disposition']))}</strong></td></tr>"
+        for row in report.get("fund_flow_table", [])
     )
 
     # Checklist rows
@@ -792,27 +842,13 @@ th {{ background: #f1f5f9; color: #334155; font-weight: 600; }}
   .footer-seal {{ page-break-inside: avoid; }}
 }}
 </style>
-<script type="module">
-(async () => {{
-  try {{
-    const mod = await import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs');
-    mod.default.initialize({{ startOnLoad: true }});
-  }} catch (e) {{
-    document.querySelectorAll('pre.mermaid').forEach(el => {{
-      const wrapper = document.createElement('div');
-      wrapper.innerHTML = '<p style="color:#b45309;font-size:12px;margin-bottom:8px;">（图谱组件加载失败，显示文本源）</p><pre style="background:#f8fafc;border:1px solid #cbd5e1;padding:12px;overflow:auto;">' + el.textContent.replace(/</g, '&lt;') + '</pre>';
-      el.parentNode.replaceChild(wrapper, el);
-    }});
-  }}
-}})();
-</script>
 </head>
 <body>
 
 <div class="no-print" style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:6px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;">
   <div>
     <strong style="color:#0f172a;font-size:14px;">资金证据核验底稿已生成</strong>
-    <span style="color:#64748b;font-size:12px;margin-left:12px;">包含审查结果数据完整性 SHA-256，可供复核备查</span>
+    <span style="color:#64748b;font-size:12px;margin-left:12px;">包含审查结果数据完整性指纹，可供复核备查</span>
   </div>
   <button onclick="window.print()" style="background:#1e40af;color:#ffffff;border:none;border-radius:4px;padding:8px 18px;font-weight:bold;cursor:pointer;font-size:13px;">打印 / 保存为 PDF</button>
 </div>
@@ -824,10 +860,6 @@ th {{ background: #f1f5f9; color: #334155; font-weight: 600; }}
   <div style="height:1px;background:#b91c1c;margin-bottom:20px;"></div>
 </div>
 
-<div class="hash-bar">
-  <strong>【审查结果数据完整性 (SHA-256)】：</strong>{html.escape(report['data_integrity_sha256'])}
-</div>
-
 <div class="disclaimer">
   <strong>使用边界：</strong>{html.escape(report['disclaimer'])}
 </div>
@@ -835,7 +867,7 @@ th {{ background: #f1f5f9; color: #334155; font-weight: 600; }}
 <div class="meta-box">
   <div><strong>案件编号：</strong>{html.escape(report['case_id'])}</div>
   <div><strong>涉案事实主张：</strong>{summary['claims_count']} 笔</div>
-  <div><strong>生成时间 (UTC)：</strong>{html.escape(report['generated_at'][:19])}</div>
+  <div><strong>生成时间：</strong>{html.escape(report['generated_at'][:19].replace('T', ' '))}（世界标准时）</div>
 </div>
 
 <div class="metric-grid">
@@ -863,13 +895,13 @@ th {{ background: #f1f5f9; color: #334155; font-weight: 600; }}
 
 <div class="legal-box">
   <strong>【疑似返还流水说明】</strong><br/>
-  下表仅依据账户关系、资金方向和 canonical 唯一事件识别可能向被害人账户转回的流水，摘要中的“收益”“分红”“份额”等文字不能单独证明返还性质或产生法定冲减效果。<br/>
+  下表仅依据账户关系、资金方向和去重后的唯一交易事件识别可能向被害人账户转回的流水，摘要中的“收益”“分红”“份额”等文字不能单独证明返还性质或产生法定冲减效果。<br/>
   当前金额为待人工核验的参考值：<strong>¥{summary.get('total_refund_amount', 0.0):,.2f}</strong>；不替代司法机关对返还性质及涉案金额的最终认定。
 </div>
 
 {narrative_section}
 
-<h2>{numbers['claims']}、 涉案事实主张（Claims）核验汇总对照表</h2>
+<h2>{numbers['claims']}、 涉案事实主张核验汇总对照表</h2>
 <table>
   <thead>
     <tr>
@@ -882,9 +914,20 @@ th {{ background: #f1f5f9; color: #334155; font-weight: 600; }}
   </tbody>
 </table>
 
-<h2>{numbers['topology']}、 全案涉案资金流向穿透拓扑图谱</h2>
+<h2>{numbers['topology']}、 全案涉案资金流向汇总表</h2>
+<p class="section-note">按「转出方 → 转入方 → 处置状态」对复核范围内流水聚合；逐笔明细见后文复核记录，交互式图谱请在系统内【涉案资金流水】页查看。</p>
 <div class="topology-box">
-  <pre class="mermaid">{html.escape(report['fund_flow_topology'])}</pre>
+  <table>
+    <thead>
+      <tr>
+        <th>转出方</th><th>转入方</th><th style="width:60px;text-align:center;">笔数</th>
+        <th>合计金额</th><th>日期范围</th><th>处置状态</th>
+      </tr>
+    </thead>
+    <tbody>
+      {flow_rows or '<tr><td colspan="6" style="text-align:center;color:#64748b;">复核范围内暂无资金流转记录</td></tr>'}
+    </tbody>
+  </table>
 </div>
 
 {conflict_section}
@@ -935,14 +978,18 @@ th {{ background: #f1f5f9; color: #334155; font-weight: 600; }}
 
 {extraction_section}
 
+<div style="margin-top:40px;padding:12px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;color:#64748b;font-size:11px;word-break:break-all;">
+  <strong style="color:#334155;">审查结果数据完整性指纹：</strong>{html.escape(report['data_integrity_sha256'])}<br/>
+  该串字符由底稿全部内容计算得出，内容任何改动都会使它变化，可用于比对底稿是否被修改。
+</div>
+
 <div class="footer-seal">
   <div>
     <p>复核经办人（签名）：____________________</p>
     <p>复核审查日期：______年____月____日</p>
   </div>
   <div style="text-align: right; color: #64748b; font-size: 11px;">
-    由 资金链证审系统 自动化辅助生成<br/>
-     数据完整性指纹：{html.escape(report['data_integrity_sha256'][:16])}...
+    由 资金链证审系统 自动化辅助生成
   </div>
 </div>
 

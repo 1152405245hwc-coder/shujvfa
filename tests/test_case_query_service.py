@@ -250,19 +250,19 @@ class ShortcutQueryTest(QueryTestCase):
         self.assertEqual(response["results"], [])
         self.assertEqual(response["audit"], [])
         self.assertEqual(self.tools.calls, [])
-        self.assertTrue(any("UNKNOWN_TOOL" in w for w in response["warnings"]))
+        self.assertTrue(any("不在只读工具目录中" in w for w in response["warnings"]))
         self.assertIn("未执行任何查询", response["answer"])
 
     def test_shortcut_rejects_write_tool(self):
         response = self.run_query("清理", tool_name="purge_case", arguments={"case_id": CASE_ID})
         self.assertEqual(response["results"], [])
-        self.assertTrue(any("WRITE_TOOL" in w for w in response["warnings"]))
+        self.assertTrue(any("不是只读工具" in w for w in response["warnings"]))
 
     def test_shortcut_rejects_cross_case_argument(self):
         response = self.run_query("看别案", tool_name="get_claim_detail",
                                   arguments={"claim_id": "CLM-01", "case_id": "CASE-OTHER"})
         self.assertEqual(response["results"], [])
-        self.assertTrue(any("CROSS_CASE_ARGUMENT" in w for w in response["warnings"]))
+        self.assertTrue(any("试图访问当前案件之外" in w for w in response["warnings"]))
 
     def test_shortcut_allows_the_current_case_id(self):
         response = self.run_query("本案", tool_name="get_claim_detail",
@@ -273,13 +273,13 @@ class ShortcutQueryTest(QueryTestCase):
         response = self.run_query("读文件", tool_name="query_transactions",
                                   arguments={"file": "../../secrets.db"})
         self.assertEqual(response["results"], [])
-        self.assertTrue(any("FORBIDDEN_ARGUMENT" in w for w in response["warnings"]))
+        self.assertTrue(any("属于禁止项" in w for w in response["warnings"]))
 
     def test_shortcut_rejects_undeclared_arguments(self):
         response = self.run_query("乱传参", tool_name="get_claim_detail",
                                   arguments={"claim_id": "CLM-01", "raw_sql": "select 1"})
         self.assertEqual(response["results"], [])
-        self.assertTrue(any("UNKNOWN_ARGUMENT" in w for w in response["warnings"]))
+        self.assertTrue(any("不在该工具允许的参数范围内" in w for w in response["warnings"]))
 
     def test_shortcut_reports_validator_failure_without_leaking_message(self):
         CATALOG["get_claim_detail"]["required"] = ["claim_id"]
@@ -288,7 +288,7 @@ class ShortcutQueryTest(QueryTestCase):
         finally:
             CATALOG["get_claim_detail"].pop("required", None)
         self.assertEqual(response["results"], [])
-        self.assertTrue(any("INVALID_ARGUMENTS" in w for w in response["warnings"]))
+        self.assertTrue(any("未通过校验" in w for w in response["warnings"]))
         self.assertNotIn("missing required argument", json.dumps(response, ensure_ascii=False))
 
     def test_shortcut_accepts_the_ui_filter_arguments(self):
@@ -337,8 +337,8 @@ class PlannedQueryTest(QueryTestCase):
         self.assertEqual(response["results"], [])
         self.assertEqual(response["audit"], [])
         self.assertEqual(self.tools.calls, [])
-        self.assertTrue(any("PLAN_REJECTED" in w for w in response["warnings"]))
-        self.assertTrue(any("UNKNOWN_TOOL" in w for w in response["warnings"]))
+        self.assertTrue(any("查询计划未通过只读安全预校验" in w for w in response["warnings"]))
+        self.assertTrue(any("不在只读工具目录中" in w for w in response["warnings"]))
 
     def test_cross_case_step_rejects_the_whole_plan(self):
         provider = FakeProvider(plan=[
@@ -347,7 +347,7 @@ class PlannedQueryTest(QueryTestCase):
         ])
         response = self.run_query("别案", provider)
         self.assertEqual(self.tools.calls, [])
-        self.assertTrue(any("CROSS_CASE_ARGUMENT" in w for w in response["warnings"]))
+        self.assertTrue(any("试图访问当前案件之外" in w for w in response["warnings"]))
 
     def test_duplicate_step_is_rejected(self):
         provider = FakeProvider(plan=[
@@ -356,7 +356,7 @@ class PlannedQueryTest(QueryTestCase):
         ])
         response = self.run_query("概览", provider)
         self.assertEqual(self.tools.calls, [])
-        self.assertTrue(any("DUPLICATE_STEP" in w for w in response["warnings"]))
+        self.assertTrue(any("完全重复" in w for w in response["warnings"]))
 
     def test_plan_longer_than_the_limit_is_rejected(self):
         provider = FakeProvider(plan=[
@@ -364,28 +364,28 @@ class PlannedQueryTest(QueryTestCase):
         ])
         response = self.run_query("概览", provider)
         self.assertEqual(self.tools.calls, [])
-        self.assertTrue(any("PLAN_TOO_LONG" in w for w in response["warnings"]))
+        self.assertTrue(any("步上限" in w for w in response["warnings"]))
         self.assertEqual(response["results"], [])
 
     def test_empty_plan_asks_for_a_more_specific_question(self):
         provider = FakeProvider(plan=[])
         response = self.run_query("今天天气怎么样？", provider)
         self.assertEqual(response["results"], [])
-        self.assertTrue(any("EMPTY_PLAN" in w for w in response["warnings"]))
+        self.assertTrue(any("无法用当前只读工具回答" in w for w in response["warnings"]))
         self.assertIn("无法回答", response["answer"])
 
     def test_missing_provider_does_not_pretend_to_search(self):
         response = self.run_query("周某主张核到多少？", None)
         self.assertEqual(response["results"], [])
         self.assertEqual(response["audit"], [])
-        self.assertTrue(any("PROVIDER_UNAVAILABLE" in w for w in response["warnings"]))
+        self.assertTrue(any("未选择可联网模型" in w for w in response["warnings"]))
         self.assertIn("没有联网", response["answer"])
         self.assertIn("快捷查询", response["answer"])
 
     def test_mock_provider_falls_back_to_shortcut_guidance(self):
         response = self.run_query("周某主张核到多少？", MockProvider())
         self.assertEqual(response["results"], [])
-        self.assertTrue(any("PLAN_SCHEMA_UNSUPPORTED" in w for w in response["warnings"]))
+        self.assertTrue(any("不支持只读查询计划契约" in w for w in response["warnings"]))
         self.assertIn("快捷查询", response["answer"])
 
     def test_provider_failure_produces_no_answer_and_no_results(self):
@@ -393,12 +393,12 @@ class PlannedQueryTest(QueryTestCase):
         response = self.run_query("周某主张核到多少？", provider)
         self.assertEqual(response["results"], [])
         self.assertEqual(response["audit"], [])
-        self.assertTrue(any("PLAN_CALL_FAILED:RuntimeError" in w for w in response["warnings"]))
+        self.assertTrue(any("异常类型：RuntimeError" in w for w in response["warnings"]))
         self.assertNotIn("sk-secret-key", json.dumps(response, ensure_ascii=False))
 
     def test_blank_question_is_reported(self):
         response = self.run_query("   ", FakeProvider(plan=[]))
-        self.assertTrue(any("EMPTY_QUESTION" in w for w in response["warnings"]))
+        self.assertTrue(any("请输入具体问题" in w for w in response["warnings"]))
         self.assertEqual(response["results"], [])
 
 
@@ -415,7 +415,7 @@ class ExecutionAuditTest(QueryTestCase):
         self.assertEqual(response["results"], [])
         self.assertEqual(response["audit"][0]["status"], "error")
         self.assertIsNone(response["audit"][0]["result_hash"])
-        self.assertTrue(any("TOOL_EXECUTION_FAILED" in w for w in response["warnings"]))
+        self.assertTrue(any("执行失败" in w for w in response["warnings"]))
         self.assertNotIn("sk-secret-key", json.dumps(response, ensure_ascii=False))
 
     def test_execution_stops_after_a_failed_step(self):
@@ -510,7 +510,7 @@ class TemplateAnswerTest(QueryTestCase):
         result = {"transaction_id": "T01", "truncated": True, "max_depth": 2,
                   "flows": [{"transaction_id": "T02", "amount": "10000.00"}]}
         response = self._answer(result)
-        self.assertTrue(any("TRACE_BOUNDARY" in w for w in response["warnings"]))
+        self.assertTrue(any("触及追溯边界" in w for w in response["warnings"]))
         self.assertIn("边界说明", response["answer"])
 
     def test_complete_result_does_not_claim_a_boundary(self):
@@ -518,7 +518,7 @@ class TemplateAnswerTest(QueryTestCase):
         result = {"claim_id": "CLM-01", "has_more": False, "returned_count": 2,
                   "transactions": [{"transaction_id": "T01", "amount": "1000.00"}]}
         response = self._answer(result)
-        self.assertFalse(any("TRACE_BOUNDARY" in w for w in response["warnings"]))
+        self.assertFalse(any("触及追溯边界" in w for w in response["warnings"]))
         self.assertNotIn("边界说明", response["answer"])
 
     def test_commingling_boundary_is_surfaced(self):
@@ -526,7 +526,7 @@ class TemplateAnswerTest(QueryTestCase):
                   "commingling_boundary": "后续流入与自有资金混同，无法继续唯一归属",
                   "subsequent_related_flows": []}
         response = self._answer(result)
-        self.assertTrue(any("TRACE_BOUNDARY" in w for w in response["warnings"]))
+        self.assertTrue(any("触及追溯边界" in w for w in response["warnings"]))
         self.assertIn("资金混同", response["answer"])
 
     def test_large_lists_are_capped_and_the_cap_is_stated(self):
@@ -587,7 +587,7 @@ class RealRegistryIntegrationTest(unittest.TestCase):
             arguments={"transaction_id": self.transaction_id, "depth": 2},
         )
         self.assertEqual(response["results"], [])
-        self.assertTrue(any("UNKNOWN_ARGUMENT" in w for w in response["warnings"]))
+        self.assertTrue(any("不在该工具允许的参数范围内" in w for w in response["warnings"]))
 
     def test_case_overview_answer_keeps_tool_numbers_verbatim(self):
         response = run_case_query(self.context, "案件概况", None, tool_name="get_case_overview")

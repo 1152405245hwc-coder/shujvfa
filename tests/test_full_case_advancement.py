@@ -105,7 +105,7 @@ class FullCaseAdvancementTest(unittest.TestCase):
         html_output = case_report_to_html(report)
         self.assertIn("全案资金证据核验底稿", html_output)
         self.assertIn(hash1, html_output)
-        self.assertIn("全案涉案资金流向穿透拓扑图谱", html_output)
+        self.assertIn("全案涉案资金流向汇总表", html_output)
 
     def test_investigation_checklist_generation(self):
         claim = Claim(
